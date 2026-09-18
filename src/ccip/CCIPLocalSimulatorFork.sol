@@ -107,6 +107,76 @@ interface IOffRampSourceConfigFork {
     function getSourceChainConfig(uint64 sourceChainSelector) external view returns (SourceChainConfig memory);
 }
 
+/// @title IOffRampV2Fork Interface
+/// @notice Minimal mirror of the CCIP 2.0 OffRamp execution surface. `execute` is permissionless and
+///         takes the opaque `encodedMessage` emitted by the source OnRamp; `getCCVsForMessage`
+///         derives the CCV list required to execute a captured message.
+interface IOffRampV2Fork {
+    function execute(
+        bytes calldata encodedMessage,
+        address[] calldata ccvs,
+        bytes[] calldata verifierResults,
+        uint32 gasLimitOverride
+    ) external;
+
+    function getCCVsForMessage(bytes calldata encodedMessage)
+        external
+        view
+        returns (address[] memory requiredCCVs, address[] memory optionalCCVs, uint8 threshold);
+}
+
+/// @title IOffRampSourceConfigV2Fork Interface
+/// @notice Minimal view/update surface for the CCIP 2.0 OffRamp per-source-chain config, including
+///         the CCV sets used to verify messages. Mirrors `OffRamp.SourceChainConfig`.
+interface IOffRampSourceConfigV2Fork {
+    struct SourceChainConfig {
+        address router;
+        bool isEnabled;
+        bytes[] onRamps;
+        address[] defaultCCVs;
+        address[] laneMandatedCCVs;
+    }
+
+    struct SourceChainConfigArgs {
+        address router;
+        uint64 sourceChainSelector;
+        bool isEnabled;
+        bytes[] onRamps;
+        address[] defaultCCVs;
+        address[] laneMandatedCCVs;
+    }
+
+    function getSourceChainConfig(uint64 sourceChainSelector) external view returns (SourceChainConfig memory);
+
+    function applySourceChainConfigUpdates(SourceChainConfigArgs[] calldata updates) external;
+
+    function owner() external view returns (address);
+}
+
+/// @title ICcipMessageSentV2Fork Interface
+/// @notice CCIP 2.0 OnRamp `CCIPMessageSent` event shape. The full message travels as an opaque
+///         `encodedMessage` that the destination OffRamp executes permissionlessly.
+interface ICcipMessageSentV2Fork {
+    struct Receipt {
+        address issuer;
+        uint32 destGasLimit;
+        uint32 destBytesOverhead;
+        uint256 feeTokenAmount;
+        bytes extraArgs;
+    }
+
+    event CCIPMessageSent(
+        uint64 indexed destChainSelector,
+        address indexed sender,
+        bytes32 indexed messageId,
+        address feeToken,
+        uint256 tokenAmountBeforeTokenPoolFees,
+        bytes encodedMessage,
+        Receipt[] receipts,
+        bytes[] verifierBlobs
+    );
+}
+
 /// @title CCIPLocalSimulatorFork
 /// @notice Works with Foundry only
 contract CCIPLocalSimulatorFork is Test {
@@ -208,6 +278,69 @@ contract CCIPLocalSimulatorFork is Test {
      */
     function setNetworkDetails(uint256 chainId, Register.NetworkDetails memory networkDetails) external {
         i_register.setNetworkDetails(chainId, networkDetails);
+    }
+
+    /**
+     * @notice Returns the destination OffRamp configured for `sourceOnRamp` on the given fork, if
+     *         discoverable. Useful to configure CCIP 2.0 lane CCVs before routing a message.
+     *
+     * @param forkId - The ID of the destination network fork.
+     * @param sourceChainSelector - The chain selector of the source chain.
+     * @param sourceOnRamp - The address of the OnRamp on the source chain.
+     *
+     * @return offRamp - The matching OffRamp address, or address(0) when not found.
+     */
+    function getOffRampForLane(uint256 forkId, uint64 sourceChainSelector, address sourceOnRamp)
+        external
+        returns (address offRamp)
+    {
+        uint256 previousForkId = vm.activeFork();
+        vm.selectFork(forkId);
+        IRouterFork.OffRamp[] memory offRamps =
+            IRouterFork(i_register.getNetworkDetails(block.chainid).routerAddress).getOffRamps();
+        offRamp = _findOffRampForLaneV2(offRamps, sourceChainSelector, sourceOnRamp);
+        vm.selectFork(previousForkId);
+    }
+
+    /**
+     * @notice Points a destination lane's default CCVs at `ccv` by impersonating the OffRamp owner.
+     *         Fork-only testing helper for CCIP 2.0 lanes: the mocked CCV must be configured on the
+     *         destination lane before a captured message can be routed through the permissionless
+     *         execution path. Router, enabled flag and OnRamp bindings are preserved.
+     *
+     * @param forkId - The ID of the destination network fork.
+     * @param offRamp - The destination OffRamp that holds the lane config.
+     * @param sourceChainSelector - The chain selector of the source chain.
+     * @param ccv - The CCV address to set as the lane default.
+     */
+    function setLaneDefaultCCVs(uint256 forkId, address offRamp, uint64 sourceChainSelector, address ccv) external {
+        uint256 previousForkId = vm.activeFork();
+        vm.selectFork(forkId);
+
+        IOffRampSourceConfigV2Fork.SourceChainConfig memory current =
+            IOffRampSourceConfigV2Fork(offRamp).getSourceChainConfig(sourceChainSelector);
+        require(current.isEnabled, "CCIPLocalSimulatorFork: lane not enabled");
+
+        address[] memory defaultCCVs = new address[](1);
+        defaultCCVs[0] = ccv;
+
+        IOffRampSourceConfigV2Fork.SourceChainConfigArgs[] memory updates =
+            new IOffRampSourceConfigV2Fork.SourceChainConfigArgs[](1);
+        updates[0] = IOffRampSourceConfigV2Fork.SourceChainConfigArgs({
+            router: current.router,
+            sourceChainSelector: sourceChainSelector,
+            isEnabled: true,
+            onRamps: current.onRamps,
+            defaultCCVs: defaultCCVs,
+            laneMandatedCCVs: new address[](0)
+        });
+
+        address owner = IOffRampSourceConfigV2Fork(offRamp).owner();
+        vm.startPrank(owner);
+        IOffRampSourceConfigV2Fork(offRamp).applySourceChainConfigUpdates(updates);
+        vm.stopPrank();
+
+        vm.selectFork(previousForkId);
     }
 
     /**
@@ -336,7 +469,109 @@ contract CCIPLocalSimulatorFork is Test {
                     }
                 }
             }
+
+            // Try Routing CCIP 2.0 message
+            if (entries[i].topics[0] == ICcipMessageSentV2Fork.CCIPMessageSent.selector) {
+                bytes32 messageId = bytes32(entries[i].topics[3]);
+                uint64 messageDestChainSelector = uint64(uint256(entries[i].topics[1]));
+                (,, bytes memory encodedMessage,,) =
+                    abi.decode(entries[i].data, (address, uint256, bytes, ICcipMessageSentV2Fork.Receipt[], bytes[]));
+
+                if (!s_processedMessages[messageId]) {
+                    for (uint256 j; j < forkIds.length; ++j) {
+                        vm.selectFork(forkIds[j]);
+                        uint64 destinationChainSelector = i_register.getNetworkDetails(block.chainid).chainSelector;
+
+                        vm.selectFork(sourceForkId);
+                        address onRampContract = IRouterFork(sourceRouterAddress).getOnRamp(destinationChainSelector);
+
+                        // Deliver message
+                        if (
+                            destinationChainSelector == messageDestChainSelector && entries[i].emitter == onRampContract
+                        ) {
+                            vm.selectFork(forkIds[j]);
+
+                            IRouterFork.OffRamp[] memory offRamps =
+                                IRouterFork(i_register.getNetworkDetails(block.chainid).routerAddress).getOffRamps();
+                            uint256 offRampsLength = offRamps.length;
+
+                            bool routed = false;
+                            for (uint256 k = offRampsLength; k > 0; --k) {
+                                if (_executeV2(offRamps[k - 1].offRamp, encodedMessage)) {
+                                    routed = true;
+                                    break;
+                                }
+                            }
+                            if (routed) {
+                                s_processedMessages[messageId] = true;
+                            }
+                        }
+                    }
+                }
+            }
         }
+    }
+
+    /// @notice Returns the CCIP 2.0 OffRamp whose lane binds `sourceOnRamp` for `sourceChainSelector`.
+    /// @dev Candidates are probed with low-level calls because the router lists OffRamps of several
+    ///      protocol versions; probing a missing selector or decoding a mismatched config payload
+    ///      must never revert the routing flow.
+    function _findOffRampForLaneV2(
+        IRouterFork.OffRamp[] memory offRamps,
+        uint64 sourceChainSelector,
+        address sourceOnRamp
+    ) internal view returns (address offRampAddress) {
+        uint256 length = offRamps.length;
+        for (uint256 i = length; i > 0; --i) {
+            address candidate = offRamps[i - 1].offRamp;
+            if (offRamps[i - 1].sourceChainSelector != sourceChainSelector) {
+                continue;
+            }
+
+            (bool ok, bytes memory data) = candidate.staticcall(
+                abi.encodeWithSelector(IOffRampSourceConfigV2Fork.getSourceChainConfig.selector, sourceChainSelector)
+            );
+            if (!ok || data.length == 0) {
+                continue;
+            }
+
+            (bool decoded, IOffRampSourceConfigV2Fork.SourceChainConfig memory cfg) = _decodeSourceChainConfigV2(data);
+            if (!decoded || !cfg.isEnabled) {
+                continue;
+            }
+
+            for (uint256 j; j < cfg.onRamps.length; ++j) {
+                if (cfg.onRamps[j].length == 32 && abi.decode(cfg.onRamps[j], (address)) == sourceOnRamp) {
+                    return candidate;
+                }
+            }
+        }
+
+        return address(0);
+    }
+
+    /// @notice Decodes a 2.0 `SourceChainConfig` return payload without reverting the caller.
+    /// @dev The decode runs in an external self-call so an incompatible candidate payload (e.g. a
+    ///      1.6 OffRamp reply) fails inside the try/catch instead of the calling frame.
+    function _decodeSourceChainConfigV2(bytes memory data)
+        internal
+        view
+        returns (bool ok, IOffRampSourceConfigV2Fork.SourceChainConfig memory cfg)
+    {
+        try this.decodeSourceChainConfigV2(data) returns (IOffRampSourceConfigV2Fork.SourceChainConfig memory decoded) {
+            return (true, decoded);
+        } catch {
+            return (false, cfg);
+        }
+    }
+
+    /// @notice External decode helper for `_decodeSourceChainConfigV2`. Do not call directly.
+    function decodeSourceChainConfigV2(bytes calldata data)
+        external
+        pure
+        returns (IOffRampSourceConfigV2Fork.SourceChainConfig memory)
+    {
+        return abi.decode(data, (IOffRampSourceConfigV2Fork.SourceChainConfig));
     }
 
     /// @notice Returns the destination OffRamp whose lane is configured for `sourceOnRamp`, if discoverable.
@@ -428,8 +663,8 @@ contract CCIPLocalSimulatorFork is Test {
         }
 
         vm.startPrank(offRamp);
-        try IEVM2EVMOffRampFork(offRamp).executeSingleMessage(any2EVMRampMessage, offchainTokenData, tokenGasOverrides)
-        {
+        try IEVM2EVMOffRampFork(offRamp)
+            .executeSingleMessage(any2EVMRampMessage, offchainTokenData, tokenGasOverrides) {
             vm.stopPrank();
             return true;
         } catch (bytes memory err) {
@@ -440,9 +675,38 @@ contract CCIPLocalSimulatorFork is Test {
     }
 
     /**
+     * @notice Attempts permissionless execution of a CCIP 2.0 message on `offRamp`, deriving the CCV
+     *         list required for the message from the OffRamp itself. Returns false when the OffRamp
+     *         does not know the message's source lane or when execution reverts, so the caller can
+     *         fall back to another candidate OffRamp.
+     *
+     * @param offRamp - The destination OffRamp to attempt execution on.
+     * @param encodedMessage - The opaque CCIP 2.0 message emitted by the source OnRamp.
+     */
+    function _executeV2(address offRamp, bytes memory encodedMessage) internal returns (bool success) {
+        // Low-level call: an OffRamp of an older protocol version does not expose the selector and
+        // returns empty data instead of a decodable result.
+        (bool ok, bytes memory data) =
+            offRamp.staticcall(abi.encodeWithSelector(IOffRampV2Fork.getCCVsForMessage.selector, encodedMessage));
+        if (!ok || data.length == 0) {
+            return false;
+        }
+
+        (address[] memory requiredCCVs,,) = abi.decode(data, (address[], address[], uint8));
+
+        bytes[] memory verifierResults = new bytes[](requiredCCVs.length);
+        try IOffRampV2Fork(offRamp).execute(encodedMessage, requiredCCVs, verifierResults, 0) {
+            return true;
+        } catch (bytes memory err) {
+            console2.logBytes(err);
+            return false;
+        }
+    }
+
+    /**
      * @notice Decodes ABI-encoded EVM address bytes to an `address`.
      * @dev Used for `Client.EVM2AnyMessage.receiver` and `Internal.EVM2AnyTokenTransfer.destTokenAddress`.
-     *      CCIP uses `abi.encode(address)` (32 bytes). A legacy 20-byte packed encoding is also supported.
+     *      CCIP uses `abi.encode(address)` (32 bytes). A legacy 20-byte packed representation is also supported.
      */
     function _decodeEVMAddress(bytes memory encodedAddress) internal pure returns (address) {
         if (encodedAddress.length == 32) {
