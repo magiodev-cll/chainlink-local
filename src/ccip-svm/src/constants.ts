@@ -12,6 +12,7 @@ export const PROGRAM_IDS = {
   rmnRemote: "RmnXLft1mSEwDgMKu2okYuHkiazxntFFcZFrrcXxYg7",
   committeeVerifier: "CV2s8jsYhx9th8pyZ4pN7apLELAB42e5j4XqWhqTdWCm",
   testReceiver: "GsgXbSfG226vCVMfamUhwFgY4kF9HkNiu3wk8Ho8cky5",
+  executor: "Exex3nkLcxMFASH75gudot5ZSQXUMRc8BrYaYHTDJrt4",
 } as const;
 
 /** `bytes4(keccak256("CommitteeVerifier 2.0.0"))`. */

@@ -97,6 +97,7 @@ interface Programs {
   feeQuoter: any;
   rmnRemote: any;
   committeeVerifier: any;
+  executor: any;
   receiver: any;
 }
 
@@ -167,6 +168,7 @@ export class CcipSvmLocal {
       rmnRemote: "rmn_remote",
       committeeVerifier: "committee_verifier",
       testReceiver: "test_ccip_receiver",
+      executor: "executor",
     };
 
     debug("deploying programs");
@@ -205,6 +207,7 @@ export class CcipSvmLocal {
       feeQuoter: new Program(idls.feeQuoter, provider),
       rmnRemote: new Program(idls.rmnRemote, provider),
       committeeVerifier: new Program(idls.committeeVerifier, provider),
+      executor: new Program(idls.executor, provider),
       receiver: new Program(idls.testReceiver, provider),
     };
 
@@ -400,6 +403,43 @@ export class CcipSvmLocal {
         config: pda([Buffer.from(SEEDS.config)], ids.ccipOfframp),
         authority,
         systemProgram: SystemProgram.programId,
+      })
+      .rpc();
+
+    // The 2.0 send path resolves an executor stage; it must exist and know the lane.
+    await this.programs.executor.methods
+      .initialize({
+        maxCcvsPerMsg: 10,
+        feeAggregator: authority,
+        allowedFinalityConfig: { flags: 0, blockDepth: 0 },
+        ccvAllowlistEnabled: false,
+      })
+      .accounts({
+        config: pda([Buffer.from(SEEDS.config)], ids.executor),
+        authority,
+        systemProgram: SystemProgram.programId,
+        eventAuthority: pda([Buffer.from("__event_authority")], ids.executor),
+        program: ids.executor,
+        programData: programData(ids.executor),
+      })
+      .rpc();
+
+    await this.programs.executor.methods
+      .setChainConfig({
+        remoteChainSelector: new BN(EVM_CHAIN_SELECTOR.toString()),
+        usdCentsFee: { 0: 0 },
+        enabled: true,
+      })
+      .accounts({
+        config: pda([Buffer.from(SEEDS.config)], ids.executor),
+        authority,
+        chainConfig: pda(
+          [Buffer.from(SEEDS.remoteChain), Buffer.from(new BN(EVM_CHAIN_SELECTOR.toString()).toArray("le", 8))],
+          ids.executor,
+        ),
+        systemProgram: SystemProgram.programId,
+        eventAuthority: pda([Buffer.from("__event_authority")], ids.executor),
+        program: ids.executor,
       })
       .rpc();
 
