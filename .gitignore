@@ -26,3 +26,7 @@ out/
 
 # Docs
 docs/
+
+# CCIP SVM local spike cache / dependencies
+.ccip-svm-cache/
+src/ccip-svm/node_modules/
