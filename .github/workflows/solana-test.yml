@@ -27,7 +27,7 @@ jobs:
   simulator:
     name: CCIP SVM simulator (build + e2e)
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -53,4 +53,6 @@ jobs:
 
       - name: Build and test
         working-directory: src/ccip-svm
+        env:
+          CCIP_SVM_DEBUG: '1'
         run: npm test

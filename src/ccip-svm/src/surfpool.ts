@@ -67,7 +67,7 @@ export class Surfpool {
         "--ws-port",
         String(wsPort),
       ],
-      { stdio: ["ignore", "ignore", "pipe"] },
+      { stdio: ["ignore", "ignore", "pipe"], detached: true },
     );
 
     let stderr = "";
@@ -123,18 +123,29 @@ export class Surfpool {
   async airdrop(to: Keypair | PublicKey, lamports: number): Promise<void> {
     const pubkey = to instanceof Keypair ? to.publicKey : to;
     const sig = await this.connection.requestAirdrop(pubkey, lamports);
-    await this.connection.confirmTransaction(sig, "confirmed");
+    await Promise.race([
+      this.connection.confirmTransaction(sig, "confirmed"),
+      new Promise((_, reject) => setTimeout(() => reject(new Error("airdrop timed out")), 30_000)),
+    ]);
   }
 
   async stop(): Promise<void> {
     if (!this.child) return;
     const child = this.child;
-    child.kill("SIGTERM");
+    const signalGroup = (signal: NodeJS.Signals) => {
+      if (child.pid === undefined) return;
+      try {
+        process.kill(-child.pid, signal);
+      } catch {
+        child.kill(signal);
+      }
+    };
+    signalGroup("SIGTERM");
     await new Promise<void>((resolve) => {
       if (child.exitCode !== null) return resolve();
       child.once("exit", () => resolve());
       setTimeout(() => {
-        if (child.exitCode === null) child.kill("SIGKILL");
+        if (child.exitCode === null) signalGroup("SIGKILL");
         resolve();
       }, 3_000);
     });

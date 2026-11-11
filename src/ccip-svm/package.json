@@ -15,7 +15,7 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "npm run build && node --test \"dist/test/*.test.js\"",
+    "test": "npm run build && node --test --test-force-exit \"dist/test/*.test.js\"",
     "test:codec": "npm run build && node --test dist/test/codec.test.js"
   },
   "dependencies": {

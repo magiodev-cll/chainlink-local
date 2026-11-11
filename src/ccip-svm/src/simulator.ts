@@ -34,6 +34,18 @@ import { Surfpool } from "./surfpool.js";
 
 const { AnchorProvider, BN, Program, Wallet } = anchor;
 
+async function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  let timer: NodeJS.Timeout;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    clearTimeout(timer!);
+  }
+}
+
 const debug = (message: string) => {
   if (process.env.CCIP_SVM_DEBUG) process.stderr.write(`[ccip-svm] ${message}\n`);
 };
@@ -472,7 +484,7 @@ export class CcipSvmLocal {
     const signature = await connection.sendRawTransaction(tx.serialize(), {
       skipPreflight: false,
     });
-    await connection.confirmTransaction(signature, "confirmed");
+    await withTimeout(connection.confirmTransaction(signature, "confirmed"), 30_000, "execute confirmation");
 
     return { messageId: id.toString("hex"), signature, resolutionTrace: resolved.trace };
   }
