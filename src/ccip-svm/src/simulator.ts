@@ -155,6 +155,22 @@ export class CcipSvmLocal {
       commitment: "confirmed",
     });
 
+    // Anchor confirms over WebSocket, which Surfpool does not serve. Poll instead.
+    (provider as any).sendAndConfirm = async (
+      tx: Transaction,
+      signers: Keypair[] = [],
+      opts?: { skipPreflight?: boolean },
+    ) => {
+      tx.feePayer = tx.feePayer ?? payer.publicKey;
+      tx.recentBlockhash = tx.recentBlockhash ?? (await surfpool.connection.getLatestBlockhash()).blockhash;
+      tx.sign(payer, ...signers);
+      const signature = await surfpool.connection.sendRawTransaction(tx.serialize(), {
+        skipPreflight: opts?.skipPreflight ?? false,
+      });
+      await confirmSignature(surfpool.connection, signature);
+      return signature;
+    };
+
     const programs: Programs = {
       offramp: new Program(idls.ccipOfframp, provider),
       router: new Program(idls.ccipRouter, provider),
