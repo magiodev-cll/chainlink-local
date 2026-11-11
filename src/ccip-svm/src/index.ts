@@ -23,4 +23,6 @@ export {
 export type { MessageV1, DecodedMessage, DestBlob, TokenTransferV1 } from "./codec.js";
 export { resolveAccounts } from "./resolver.js";
 export { createBurnMintToken, tokenAccountFor, BURN_MINT_POOL } from "./tokens.js";
+export { deliverToEvm, toAny2EvmMessage } from "./evm.js";
+export type { Any2EvmMessage, EvmRouterLike, DeliverToEvmOptions } from "./evm.js";
 export type { ResolvedAccount, ResolveResult } from "./resolver.js";
