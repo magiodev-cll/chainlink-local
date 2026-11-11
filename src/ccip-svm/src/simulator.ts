@@ -75,6 +75,8 @@ export interface DeliverOptions {
   receiverWritableBitmap?: bigint;
   /** Source on-ramp address bytes carried in the message. Defaults to a 20-byte sentinel. */
   onRampAddress?: Uint8Array;
+  /** Message number; change it to make an otherwise identical delivery unique. */
+  messageNumber?: bigint;
   /** Token transfer. The receiver is a wallet; its ATA is derived and created on delivery. */
   token?: {
     mint: PublicKey;
@@ -520,7 +522,7 @@ export class CcipSvmLocal {
     const encodedMessage = encodeMessage({
       sourceChainSelector: opts.sourceChainSelector ?? EVM_CHAIN_SELECTOR,
       destChainSelector: SVM_CHAIN_SELECTOR,
-      messageNumber: 1n,
+      messageNumber: opts.messageNumber ?? 1n,
       executionGasLimit: 200_000,
       ccipReceiveGasLimit: 200_000,
       onRampAddress: opts.onRampAddress ?? SENTINEL_ONRAMP,
