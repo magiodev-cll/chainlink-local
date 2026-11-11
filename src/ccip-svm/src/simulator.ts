@@ -1,4 +1,5 @@
 import anchor from "@anchor-lang/core";
+import { TOKEN_PROGRAM_ID, createInitializeMint2Instruction } from "@solana/spl-token";
 import {
   AddressLookupTableProgram,
   Keypair,
@@ -197,9 +198,26 @@ export class CcipSvmLocal {
     const { offramp, router, feeQuoter, rmnRemote, committeeVerifier, receiver } = this.programs;
 
     // LINK stand-in mint: FeeQuoter validates ownership, nothing else uses it for inbound.
-    const { createMint } = await import("@solana/spl-token");
+    // Built by hand because spl-token's createMint confirms over WebSocket.
     const linkMint = Keypair.generate();
-    await createMint(this.surfpool.connection, this.payer, authority, null, 6, linkMint);
+    const mintRent = await this.surfpool.connection.getMinimumBalanceForRentExemption(82);
+    const mintTx = new Transaction().add(
+      SystemProgram.createAccount({
+        fromPubkey: authority,
+        newAccountPubkey: linkMint.publicKey,
+        space: 82,
+        lamports: mintRent,
+        programId: TOKEN_PROGRAM_ID,
+      }),
+      createInitializeMint2Instruction(linkMint.publicKey, 6, authority, null),
+    );
+    mintTx.feePayer = authority;
+    mintTx.recentBlockhash = (await this.surfpool.connection.getLatestBlockhash()).blockhash;
+    mintTx.sign(this.payer, linkMint);
+    const mintSignature = await this.surfpool.connection.sendRawTransaction(mintTx.serialize(), {
+      skipPreflight: false,
+    });
+    await confirmSignature(this.surfpool.connection, mintSignature);
 
     await offramp.methods
       .initialize()
