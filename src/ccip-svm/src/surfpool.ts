@@ -31,6 +31,32 @@ async function waitForRpc(connection: Connection, timeoutMs = 30_000): Promise<v
 }
 
 /**
+ * Wait for a transaction without WebSocket subscriptions.
+ *
+ * `confirmTransaction` subscribes over WS, which Surfpool does not serve reliably in `--ci`
+ * mode; polling `getSignatureStatuses` works everywhere and gives a bounded failure.
+ */
+export async function confirmSignature(
+  connection: Connection,
+  signature: string,
+  timeoutMs = 30_000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const { value } = await connection.getSignatureStatuses([signature]);
+    const status = value[0];
+    if (status?.err) {
+      throw new Error(`transaction ${signature} failed: ${JSON.stringify(status.err)}`);
+    }
+    if (status?.confirmationStatus === "confirmed" || status?.confirmationStatus === "finalized") {
+      return;
+    }
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  throw new Error(`transaction ${signature} was not confirmed within ${timeoutMs}ms`);
+}
+
+/**
  * A Surfpool instance, either spawned by the harness or attached to one the user already runs.
  *
  * Spawning always uses `--offline --no-deploy --no-tui --no-studio --ci`: no datasource, no
@@ -123,10 +149,7 @@ export class Surfpool {
   async airdrop(to: Keypair | PublicKey, lamports: number): Promise<void> {
     const pubkey = to instanceof Keypair ? to.publicKey : to;
     const sig = await this.connection.requestAirdrop(pubkey, lamports);
-    await Promise.race([
-      this.connection.confirmTransaction(sig, "confirmed"),
-      new Promise((_, reject) => setTimeout(() => reject(new Error("airdrop timed out")), 30_000)),
-    ]);
+    await confirmSignature(this.connection, sig);
   }
 
   async stop(): Promise<void> {

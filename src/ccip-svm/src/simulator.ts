@@ -30,21 +30,9 @@ import {
   u64LeBytes,
 } from "./constants.js";
 import { resolveAccounts } from "./resolver.js";
-import { Surfpool } from "./surfpool.js";
+import { confirmSignature, Surfpool } from "./surfpool.js";
 
 const { AnchorProvider, BN, Program, Wallet } = anchor;
-
-async function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
-  let timer: NodeJS.Timeout;
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
-  });
-  try {
-    return await Promise.race([promise, timeout]);
-  } finally {
-    clearTimeout(timer!);
-  }
-}
 
 const debug = (message: string) => {
   if (process.env.CCIP_SVM_DEBUG) process.stderr.write(`[ccip-svm] ${message}\n`);
@@ -468,7 +456,10 @@ export class CcipSvmLocal {
     setup.feePayer = authority;
     setup.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
     setup.sign(this.payer);
-    await connection.sendRawTransaction(setup.serialize(), { skipPreflight: false });
+    const setupSignature = await connection.sendRawTransaction(setup.serialize(), {
+      skipPreflight: false,
+    });
+    await confirmSignature(connection, setupSignature);
     await this.surfpool.rpc("surfnet_timeTravel", [{ absoluteSlot: slot + 10 }]);
 
     debug("sending execute transaction");
@@ -484,7 +475,7 @@ export class CcipSvmLocal {
     const signature = await connection.sendRawTransaction(tx.serialize(), {
       skipPreflight: false,
     });
-    await withTimeout(connection.confirmTransaction(signature, "confirmed"), 30_000, "execute confirmation");
+    await confirmSignature(connection, signature);
 
     return { messageId: id.toString("hex"), signature, resolutionTrace: resolved.trace };
   }
