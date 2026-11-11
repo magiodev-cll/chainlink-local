@@ -25,7 +25,7 @@ test(
       assert.match(dataResult.messageId, /^[0-9a-f]{64}$/);
       assert.ok(dataResult.resolutionTrace.includes("resolve_accounts_start"));
 
-      const { mint } = await sim.createBurnMintToken();
+      const { mint } = await sim.createBurnMintToken({ initialSupply: 1_000n });
       const ata = sim.tokenAccountFor(mint);
       const tokenResult = await sim.deliver({
         data: "tokens from ethereum",
@@ -34,7 +34,7 @@ test(
 
       assert.equal(await sim.receiverCounterValue(), 2n);
       const balance = await sim.connection.getTokenAccountBalance(ata, "confirmed");
-      assert.equal(balance.value.amount, "7");
+      assert.equal(balance.value.amount, "1007"); // seeded supply + delivered amount
       assert.ok(tokenResult.resolutionTrace.includes("resolve_accounts_execute_token_transfer_retrieve_lut_stage"));
 
       // Outbound: a real Router send on the local EVM lane.

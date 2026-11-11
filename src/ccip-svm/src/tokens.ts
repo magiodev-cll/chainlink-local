@@ -66,7 +66,7 @@ async function send(
 /** Deploy the BurnMint pool and wire a fresh SPL mint through the router's token registry. */
 export async function createBurnMintToken(
   harness: TokenHarness,
-  opts: { decimals?: number } = {},
+  opts: { decimals?: number; initialSupply?: bigint } = {},
 ) {
   const { connection, payer, router } = harness;
   const decimals = opts.decimals ?? 6;
@@ -151,6 +151,21 @@ export async function createBurnMintToken(
       .transaction(),
   );
 
+  // Seed the sender before the pool takes mint authority; outbound sends burn from here.
+  const initialSupply = opts.initialSupply ?? 1_000_000n;
+  if (initialSupply > 0n) {
+    const payerAta = getAssociatedTokenAddressSync(mintAddress, authority);
+    await send(harness, async () => {
+      const { createAssociatedTokenAccountInstruction, createMintToInstruction } = await import(
+        "@solana/spl-token"
+      );
+      return new Transaction().add(
+        createAssociatedTokenAccountInstruction(authority, payerAta, authority, mintAddress),
+        createMintToInstruction(mintAddress, payerAta, authority, initialSupply),
+      );
+    });
+  }
+
   await send(harness, async () => {
     const { AuthorityType, createSetAuthorityInstruction } = await import("@solana/spl-token");
     return new Transaction().add(
@@ -184,7 +199,7 @@ export async function createBurnMintToken(
         new BN(EVM_CHAIN_SELECTOR.toString()),
         mintAddress,
         { enabled: true, capacity: new BN("1000000000000"), rate: new BN("1000000000") },
-        { enabled: false, capacity: new BN(0), rate: new BN(0) },
+        { enabled: true, capacity: new BN("1000000000000"), rate: new BN("1000000000") },
       )
       .accounts({ state, chainConfig, authority })
       .transaction(),

@@ -109,6 +109,7 @@ export class CcipSvmLocal {
   private readonly programs: Programs;
   private readonly offrampId: PublicKey;
   private readonly offrampIdl: Idl;
+  private readonly routerIdl: Idl;
   private readonly artifactsDir: string;
   private readonly provider: any;
   private linkMint!: PublicKey;
@@ -121,6 +122,7 @@ export class CcipSvmLocal {
     programs: Programs,
     offrampId: PublicKey,
     offrampIdl: Idl,
+    routerIdl: Idl,
     artifactsDir: string,
     provider: any,
   ) {
@@ -130,6 +132,7 @@ export class CcipSvmLocal {
     this.programs = programs;
     this.offrampId = offrampId;
     this.offrampIdl = offrampIdl;
+    this.routerIdl = routerIdl;
     this.artifactsDir = artifactsDir;
     this.provider = provider;
   }
@@ -207,6 +210,7 @@ export class CcipSvmLocal {
       programs,
       ids.ccipOfframp,
       idls.ccipOfframp,
+      idls.ccipRouter,
       bundleDir,
       provider,
     );
@@ -429,6 +433,7 @@ export class CcipSvmLocal {
       provider: this.provider,
       linkMint: this.linkMint,
       router: this.programs.router,
+      routerIdl: this.routerIdl,
       feeQuoter: this.programs.feeQuoter,
       rmnRemote: this.programs.rmnRemote,
       rpc: (method: string, params: unknown[]) => this.surfpool.rpc(method, params),
@@ -436,7 +441,7 @@ export class CcipSvmLocal {
   }
 
   /** Deploy a BurnMint pool and wire a fresh SPL mint through the router registry. */
-  async createBurnMintToken(opts: { decimals?: number } = {}) {
+  async createBurnMintToken(opts: { decimals?: number; initialSupply?: bigint } = {}) {
     return createBurnMintToken(
       {
         connection: this.surfpool.connection,

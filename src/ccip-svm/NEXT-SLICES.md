@@ -82,10 +82,23 @@ This half can be built and unit-tested today, independently of 1a.
 
 ### 1c. Outbound token transfers
 
-Not done. Needs: outbound rate limit enabled on the pool, `token_indexes` plus the pool's
-additional accounts for each token, and the same `derive_accounts_ccip_send` loop the Router
-exposes for send-side account resolution. `createBurnMintToken` already produces every PDA the
-pool needs; only the onramp derivation and the token-index bookkeeping are missing.
+Not done, and partially explored. What works: the Router's `derive_accounts_ccip_send` loop is
+implemented and returns the right shape — stages are strings (`Start`,
+`TokenTransferStaticAccounts/<i>/<page>`), `accounts_to_save` starts with the 18 accounts
+`ccip_send` declares, and `token_indexes` holds the **start offset** of each token's pool
+accounts (`tokenIndex - 18` at the token stage, so `[0]` for one token).
+
+What fails: with a BurnMint pool the send reaches the pool's `lock_or_burn` and the SPL Token
+program returns `owner does not match`. The remaining accounts are likely ordered or typed
+wrongly relative to what `validate_and_parse_onramp_token_accounts` expects, or the user ATA is
+not the one the pool tries to burn from. Next step is to diff the derived account list against
+the Go test's `DeriveSendAccounts` output for the same message.
+
+Not yet tried: `derive_accounts_ccip_send` also returns lookup tables; ignoring them forced a
+throwaway ALT per send. Use the returned LUTs.
+
+The fixture now seeds an initial supply to the payer before the pool takes mint authority and
+enables the outbound rate limit, so the only missing piece is the send-side account list.
 
 ## 2. CCIP 1.6 adapter
 
