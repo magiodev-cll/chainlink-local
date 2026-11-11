@@ -80,6 +80,13 @@ node is spawned by this package; the user brings one (Anvil/Foundry/Hardhat).
 
 This half can be built and unit-tested today, independently of 1a.
 
+### 1c. Outbound token transfers
+
+Not done. Needs: outbound rate limit enabled on the pool, `token_indexes` plus the pool's
+additional accounts for each token, and the same `derive_accounts_ccip_send` loop the Router
+exposes for send-side account resolution. `createBurnMintToken` already produces every PDA the
+pool needs; only the onramp derivation and the token-index bookkeeping are missing.
+
 ## 2. CCIP 1.6 adapter
 
 **Verified this session:** the `solana-v1.6.2` binaries deploy to Surfpool 1.7 and report
