@@ -89,6 +89,110 @@ export function encodeMessage(m: MessageV1): Buffer {
   ]);
 }
 
+export interface DecodedMessage extends Omit<MessageV1, "tokenTransfer"> {
+  tokenTransfer?: TokenTransferV1;
+}
+
+class Reader {
+  private offset = 0;
+  constructor(private readonly buf: Buffer) {}
+  get remaining() {
+    return this.buf.length - this.offset;
+  }
+  u8() {
+    return this.buf[this.offset++];
+  }
+  u16() {
+    const v = this.buf.readUInt16BE(this.offset);
+    this.offset += 2;
+    return v;
+  }
+  u32() {
+    const v = this.buf.readUInt32BE(this.offset);
+    this.offset += 4;
+    return v;
+  }
+  u64() {
+    const v = this.buf.readBigUInt64BE(this.offset);
+    this.offset += 8;
+    return v;
+  }
+  bytes(n: number) {
+    const v = this.buf.subarray(this.offset, this.offset + n);
+    this.offset += n;
+    return v;
+  }
+  lenU8() {
+    return this.bytes(this.u8());
+  }
+  lenU16() {
+    return this.bytes(this.u16());
+  }
+}
+
+export function decodeTokenTransfer(r: Reader): TokenTransferV1 {
+  const version = r.u8();
+  if (version !== 1) throw new Error(`unsupported TokenTransferV1 version ${version}`);
+  const amount = r.bytes(32);
+  const sourcePoolAddress = r.lenU8();
+  const sourceTokenAddress = r.lenU8();
+  const destTokenAddress = r.lenU8();
+  const tokenReceiver = r.lenU8();
+  const extraData = r.lenU16();
+  return {
+    amount: BigInt("0x" + Buffer.from(amount).toString("hex")),
+    sourcePoolAddress,
+    sourceTokenAddress,
+    destTokenAddress,
+    tokenReceiver,
+    extraData,
+  };
+}
+
+/** Decode the 2.0 `MessageV1` wire format. Inverse of {@link encodeMessage}. */
+export function decodeMessage(encodedMessage: Uint8Array): DecodedMessage {
+  const r = new Reader(Buffer.from(encodedMessage));
+  const version = r.u8();
+  if (version !== 1) throw new Error(`unsupported MessageV1 version ${version}`);
+  const sourceChainSelector = r.u64();
+  const destChainSelector = r.u64();
+  const messageNumber = r.u64();
+  const executionGasLimit = r.u32();
+  const ccipReceiveGasLimit = r.u32();
+  const finalityFlags = r.u16();
+  const finalityBlockDepth = r.u16();
+  const ccvAndExecutorHash = r.bytes(32);
+  const onRampAddress = r.lenU8();
+  const offRampAddress = r.lenU8();
+  const sender = r.lenU8();
+  const receiver = r.lenU8();
+  const destBlob = r.lenU16();
+  const tokenTransferBytes = r.lenU16();
+  const data = r.lenU16();
+  if (r.remaining !== 0) throw new Error("trailing bytes in MessageV1");
+
+  return {
+    sourceChainSelector,
+    destChainSelector,
+    messageNumber,
+    executionGasLimit,
+    ccipReceiveGasLimit,
+    finalityFlags,
+    finalityBlockDepth,
+    ccvAndExecutorHash,
+    onRampAddress,
+    offRampAddress,
+    sender,
+    receiver,
+    destBlob,
+    tokenTransfer:
+      tokenTransferBytes.length > 0
+        ? decodeTokenTransfer(new Reader(Buffer.from(tokenTransferBytes)))
+        : undefined,
+    data,
+  };
+}
+
 export function messageId(encodedMessage: Uint8Array): Buffer {
   return Buffer.from(getBytes(keccak256(encodedMessage)));
 }
