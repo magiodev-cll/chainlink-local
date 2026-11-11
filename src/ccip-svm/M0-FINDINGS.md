@@ -9,6 +9,12 @@ CCIP 2.0 Solana artifacts from `chainlink-ccip-solana` release `latest`
 **Verdict: GO for 2.0. The core assumption holds — the real programs run on
 Surfpool and a local key can own the entire trust layer.**
 
+**Update: the full inbound path now passes end to end.** `CcipSvmLocal.start()`
+boots the whole environment in ~3.4 s and `deliver()` lands an EVM-originated
+message in `test_ccip_receiver`, which increments its counter from 0 to 1. The
+four-stage resolution (`start → message → message → ccv`), CCV verification and
+receiver CPI all execute on-chain. See `src/` and `test/e2e.test.ts`.
+
 ## What was proven
 
 | Step | Result | Time |
@@ -125,18 +131,24 @@ Surfpool instance**; a test needing both must run two validators.
 
 ## Not done yet
 
-1. **`execute_v2` end to end.** Blocked on the account-layout work above. This
-   is the last unknown in the inbound path.
-2. **1.6 arm.** Not attempted. Its trust layer is OCR3 (secp256k1 committee,
+1. **1.6 arm.** Not attempted. Its trust layer is OCR3 (secp256k1 committee,
    `f = 1`, two signatures over `keccak(report_bytes || report_context)`), which
    is a different but comparable amount of work. The 1.6 artifacts deploy the
    same way; only the bootstrap differs.
-3. **Token pools.** Untouched in both versions.
-4. **SVM→EVM.** Untouched.
+2. **Token pools.** Untouched in both versions.
+3. **SVM→EVM.** Untouched.
+
+## Additional finding: signature library
+
+`@noble/curves` signatures over the CCV hash were rejected on chain as
+`UnauthorizedSigner` even though they recovered to the right address locally,
+with both native and normalised recovery ids. `ethers` `SigningKey.sign()` with
+the Go client's `s -> n - s` normalisation for `v == 28` works. The package uses
+ethers. The cause was not isolated further; it is not on the critical path, but
+do not swap the signer implementation without re-running the e2e test.
 
 ## Revised estimate
 
-- 2.0 inbound data-only, complete: **+3–5 days** (resolver + message codec +
-  receiver wiring).
+- 2.0 inbound data-only: **done**.
 - 1.6 inbound data-only: **+3–4 days** after the core exists.
 - The trust-layer risk is retired; remaining risk is ordinary implementation.
