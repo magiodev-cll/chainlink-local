@@ -1,4 +1,4 @@
-import { AnchorProvider, BN, Program } from "@anchor-lang/core";
+import anchor from "@anchor-lang/core";
 import {
   AddressLookupTableProgram,
   Connection,
@@ -28,6 +28,9 @@ import { confirmSignature } from "./surfpool.js";
 
 export const BURN_MINT_POOL = new PublicKey("41FGToCmdaWa1dgZLKFAjvmx6e6AjVTX7SVRibvsMGVB");
 export const BURN_MINT_POOL_IDL = "burnmint_token_pool";
+
+const { AnchorProvider, BN, Program } = anchor;
+type AnchorProvider = InstanceType<typeof AnchorProvider>;
 
 export interface TokenHarness {
   connection: Connection;
