@@ -80,6 +80,22 @@ node is spawned by this package; the user brings one (Anvil/Foundry/Hardhat).
 
 This half can be built and unit-tested today, independently of 1a.
 
+### 1b. CCIP 2.0 send lane (`ccip_send_v2`)
+
+Partially explored and reverted. What works:
+
+- `router.add_dest_chain_v2` with `DestChainConfigCcipV2` — the dest chain PDA seed is
+  `dest_chain_state_v2`, not `dest_chain_state`.
+- `fee_quoter.upsert_dest_chain_config_v2` with `DestChainConfigV2` — `linkFeeMultiplierPercent`
+  must be non-zero (100 = 1x).
+
+What blocks it: `ccip_send_v2` resolves through the **generic** `resolve_accounts_start` chain,
+not `derive_accounts_ccip_send`. That chain includes `resolve_accounts_executor_stage`, which
+needs the real executor program (`Exex3nkLcxMFASH75gudot5ZSQXUMRc8BrYaYHTDJrt4`) deployed and
+initialized. Pointing `default_executor` at the committee verifier fails with
+`InvalidInstructionData` at that stage. Next step: deploy `executor.so`, initialize it and its
+chain config, then set `default_executor`.
+
 ### 1c. Outbound token transfers
 
 Not done, and partially explored. What works: the Router's `derive_accounts_ccip_send` loop is
