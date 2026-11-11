@@ -89,10 +89,22 @@ implemented and returns the right shape — stages are strings (`Start`,
 accounts (`tokenIndex - 18` at the token stage, so `[0]` for one token).
 
 What fails: with a BurnMint pool the send reaches the pool's `lock_or_burn` and the SPL Token
-program returns `owner does not match`. The remaining accounts are likely ordered or typed
-wrongly relative to what `validate_and_parse_onramp_token_accounts` expects, or the user ATA is
-not the one the pool tries to burn from. Next step is to diff the derived account list against
-the Go test's `DeriveSendAccounts` output for the same message.
+program returns `owner does not match`.
+
+What the upstream Go test does differently (`contracts/tests/ccip/onramp_test.go:871`):
+
+- It replaces **all** account values with the derived list (`AccountValues = derivedAccounts`),
+  it does not splice `slice(18)` onto hand-built accounts. Same 18 prefix, so slicing is fine,
+  but building the instruction from the derived list removes any doubt about ordering.
+- It pays fees in a **token** and calls `TokenApproveChecked(..., billingSignerPDA, user)`
+  before sending. With native SOL fees that approval does not apply, which points at the fee
+  path rather than the pool: check whether `fee_token_user_associated_account` being the zero
+  pubkey is actually honoured when the message also carries a token transfer.
+- It resolves the returned lookup tables and sends via `SendAndConfirmWithLookupTables` with an
+  explicit compute unit limit (300k).
+
+Next step: take the derived list verbatim as the instruction's account list, and try a
+token-denominated fee (billing signer approval) to isolate pool vs fee.
 
 Not yet tried: `derive_accounts_ccip_send` also returns lookup tables; ignoring them forced a
 throwaway ALT per send. Use the returned LUTs.
