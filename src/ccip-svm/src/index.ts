@@ -21,4 +21,5 @@ export {
 } from "./codec.js";
 export type { MessageV1, DestBlob } from "./codec.js";
 export { resolveAccounts } from "./resolver.js";
+export { createBurnMintToken, tokenAccountFor, BURN_MINT_POOL } from "./tokens.js";
 export type { ResolvedAccount, ResolveResult } from "./resolver.js";

@@ -15,6 +15,10 @@ export const PROGRAM_IDS = {
 } as const;
 
 /** `bytes4(keccak256("CommitteeVerifier 2.0.0"))`. */
+/** Fixed source-chain token/pool addresses used by the local fixture. */
+export const REMOTE_TOKEN_ADDRESS = Buffer.alloc(20, 7);
+export const REMOTE_POOL_ADDRESS = Buffer.alloc(20, 8);
+
 export const CCV_VERSION_TAG = Uint8Array.from([0xe9, 0xa0, 0x5a, 0x20]);
 
 export const BPF_LOADER_UPGRADEABLE = new PublicKey("BPFLoaderUpgradeab1e11111111111111111111111");

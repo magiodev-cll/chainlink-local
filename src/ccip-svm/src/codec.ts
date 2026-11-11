@@ -17,7 +17,33 @@ export interface MessageV1 {
   sender: Uint8Array;
   receiver: Uint8Array;
   destBlob: Uint8Array;
+  /** Optional encoded TokenTransferV1. */
+  tokenTransfer?: Uint8Array;
   data: Uint8Array;
+}
+
+/** TokenTransferV1: custom versioned codec, not borsh. */
+export interface TokenTransferV1 {
+  amount: bigint;
+  sourcePoolAddress: Uint8Array;
+  sourceTokenAddress: Uint8Array;
+  destTokenAddress: Uint8Array;
+  tokenReceiver: Uint8Array;
+  extraData?: Uint8Array;
+}
+
+export function encodeTokenTransfer(t: TokenTransferV1): Buffer {
+  const amount = Buffer.alloc(32);
+  amount.writeBigUInt64BE(t.amount, 24);
+  return Buffer.concat([
+    Buffer.from([1]),
+    amount,
+    lenU8(t.sourcePoolAddress),
+    lenU8(t.sourceTokenAddress),
+    lenU8(t.destTokenAddress),
+    lenU8(t.tokenReceiver),
+    lenU16(t.extraData ?? new Uint8Array(0)),
+  ]);
 }
 
 const beU64 = (n: bigint) => {
@@ -58,7 +84,7 @@ export function encodeMessage(m: MessageV1): Buffer {
     lenU8(m.sender),
     lenU8(m.receiver),
     lenU16(m.destBlob),
-    lenU16(new Uint8Array(0)), // token transfer (unsupported in M1)
+    lenU16(m.tokenTransfer ?? new Uint8Array(0)),
     lenU16(m.data),
   ]);
 }

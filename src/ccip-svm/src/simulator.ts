@@ -2,6 +2,7 @@ import anchor from "@anchor-lang/core";
 import { TOKEN_PROGRAM_ID, createInitializeMint2Instruction } from "@solana/spl-token";
 import {
   AddressLookupTableProgram,
+  ComputeBudgetProgram,
   Keypair,
   LAMPORTS_PER_SOL,
   PublicKey,
@@ -18,6 +19,7 @@ import {
   committeeKey,
   encodeDestBlob,
   encodeMessage,
+  encodeTokenTransfer,
   messageId,
   signVerifierResults,
 } from "./codec.js";
@@ -31,6 +33,7 @@ import {
   u64LeBytes,
 } from "./constants.js";
 import { resolveAccounts } from "./resolver.js";
+import { createBurnMintToken, tokenAccountFor } from "./tokens.js";
 import { confirmSignature, Surfpool } from "./surfpool.js";
 
 const { AnchorProvider, BN, Program, Wallet } = anchor;
@@ -67,6 +70,12 @@ export interface DeliverOptions {
   receiverProgram?: PublicKey;
   /** Receiver accounts carried in the dest blob (after the three fixed CPI accounts). */
   receiverAccounts?: PublicKey[];
+  /** Token transfer. The receiver is a wallet; its ATA is derived and created on delivery. */
+  token?: {
+    mint: PublicKey;
+    receiver?: PublicKey;
+    amount: bigint;
+  };
 }
 
 export interface DeliveryResult {
@@ -99,6 +108,8 @@ export class CcipSvmLocal {
   private readonly programs: Programs;
   private readonly offrampId: PublicKey;
   private readonly offrampIdl: Idl;
+  private readonly artifactsDir: string;
+  private readonly provider: any;
 
   private constructor(
     surfpool: Surfpool,
@@ -107,6 +118,8 @@ export class CcipSvmLocal {
     programs: Programs,
     offrampId: PublicKey,
     offrampIdl: Idl,
+    artifactsDir: string,
+    provider: any,
   ) {
     this.surfpool = surfpool;
     this.ownsSurfpool = ownsSurfpool;
@@ -114,6 +127,8 @@ export class CcipSvmLocal {
     this.programs = programs;
     this.offrampId = offrampId;
     this.offrampIdl = offrampIdl;
+    this.artifactsDir = artifactsDir;
+    this.provider = provider;
   }
 
   static async start(opts: StartOptions = {}): Promise<CcipSvmLocal> {
@@ -182,7 +197,16 @@ export class CcipSvmLocal {
     };
 
     debug("programs deployed, bootstrapping trust layer");
-    const sim = new CcipSvmLocal(surfpool, ownsSurfpool, payer, programs, ids.ccipOfframp, idls.ccipOfframp);
+    const sim = new CcipSvmLocal(
+      surfpool,
+      ownsSurfpool,
+      payer,
+      programs,
+      ids.ccipOfframp,
+      idls.ccipOfframp,
+      bundleDir,
+      provider,
+    );
     await sim.bootstrap(ids, idls);
     debug("bootstrap complete");
     return sim;
@@ -379,6 +403,49 @@ export class CcipSvmLocal {
       .rpc();
   }
 
+  get connection() {
+    return this.surfpool.connection;
+  }
+
+  /** Deploy a BurnMint pool and wire a fresh SPL mint through the router registry. */
+  async createBurnMintToken(opts: { decimals?: number } = {}) {
+    return createBurnMintToken(
+      {
+        connection: this.surfpool.connection,
+        payer: this.payer,
+        provider: this.provider,
+        router: this.programs.router,
+        deployProgram: (name, id) => this.deployProgram(name, id),
+        rpc: (method, params) => this.surfpool.rpc(method, params),
+        readIdl: (name) => readIdl(this.artifactsDir, name),
+      },
+      opts,
+    );
+  }
+
+  /** ATA that `deliver` will credit for `mint`. */
+  tokenAccountFor(mint: PublicKey, owner: PublicKey = this.payer.publicKey): PublicKey {
+    return tokenAccountFor(mint, owner);
+  }
+
+  get surfpoolInstance() {
+    return this.surfpool;
+  }
+
+  get routerProgram() {
+    return this.programs.router;
+  }
+
+  get payerKeypair() {
+    return this.payer;
+  }
+
+  /** Deploy any extra program shipped in the pinned artifact bundle. */
+  async deployProgram(name: string, programId: PublicKey): Promise<void> {
+    await this.surfpool.deployProgram(programId, readProgram(this.artifactsDir, name));
+    await this.surfpool.setProgramAuthority(programId, this.payer.publicKey);
+  }
+
   receiverCounter(): PublicKey {
     return pda([Buffer.from(SEEDS.counter)], new PublicKey(PROGRAM_IDS.testReceiver));
   }
@@ -424,9 +491,20 @@ export class CcipSvmLocal {
       sender: opts.sender ?? DEFAULT_SENDER,
       receiver: receiverProgram.toBuffer(),
       destBlob: encodeDestBlob({
+        // 0 = DeriveAtaAndCreate. Pool v1 rejects UseAsIs.
+        useAta: 0,
         accounts: receiverAccounts,
         accountIsWritableBitmap: 0b11n,
       }),
+      tokenTransfer: opts.token
+        ? encodeTokenTransfer({
+            amount: opts.token.amount,
+            sourcePoolAddress: Buffer.alloc(20, 8),
+            sourceTokenAddress: Buffer.alloc(20, 7),
+            destTokenAddress: opts.token.mint.toBuffer(),
+            tokenReceiver: (opts.token.receiver ?? this.payer.publicKey).toBuffer(),
+          })
+        : undefined,
       data,
     });
 
@@ -480,20 +558,34 @@ export class CcipSvmLocal {
       payer: authority,
       recentSlot: slot,
     });
-    const extendIx = AddressLookupTableProgram.extendLookupTable({
-      lookupTable,
-      authority,
-      payer: authority,
-      addresses: resolved.accounts.map((a) => a.pubkey),
-    });
-    const setup = new Transaction().add(createIx, extendIx);
-    setup.feePayer = authority;
-    setup.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
-    setup.sign(this.payer);
-    const setupSignature = await connection.sendRawTransaction(setup.serialize(), {
-      skipPreflight: false,
-    });
-    await confirmSignature(connection, setupSignature);
+    const createTx = new Transaction().add(createIx);
+    createTx.feePayer = authority;
+    createTx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
+    createTx.sign(this.payer);
+    await confirmSignature(
+      connection,
+      await connection.sendRawTransaction(createTx.serialize(), { skipPreflight: false }),
+    );
+
+    // A legacy transaction fits ~20 pubkeys; extend large account lists in chunks.
+    const addresses = resolved.accounts.map((a) => a.pubkey);
+    for (let i = 0; i < addresses.length; i += 20) {
+      const extendTx = new Transaction().add(
+        AddressLookupTableProgram.extendLookupTable({
+          lookupTable,
+          authority,
+          payer: authority,
+          addresses: addresses.slice(i, i + 20),
+        }),
+      );
+      extendTx.feePayer = authority;
+      extendTx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
+      extendTx.sign(this.payer);
+      await confirmSignature(
+        connection,
+        await connection.sendRawTransaction(extendTx.serialize(), { skipPreflight: false }),
+      );
+    }
     await this.surfpool.rpc("surfnet_timeTravel", [{ absoluteSlot: slot + 10 }]);
 
     debug("sending execute transaction");
@@ -502,7 +594,7 @@ export class CcipSvmLocal {
     const message = new TransactionMessage({
       payerKey: authority,
       recentBlockhash: (await connection.getLatestBlockhash()).blockhash,
-      instructions: [executeIx],
+      instructions: [ComputeBudgetProgram.setComputeUnitLimit({ units: 1_400_000 }), executeIx],
     }).compileToV0Message([alt]);
     const tx = new VersionedTransaction(message);
     tx.sign([this.payer]);

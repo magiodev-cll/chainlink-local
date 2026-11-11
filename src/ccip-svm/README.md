@@ -8,8 +8,15 @@ for source-chain finality.
 import { CcipSvmLocal } from "@chainlink/local-solana";
 
 const sim = await CcipSvmLocal.start();
-const result = await sim.deliver({ data: "hello from ethereum" });
-console.log(result.messageId, result.signature);
+
+// data-only
+await sim.deliver({ data: "hello from ethereum" });
+
+// token transfer
+const { mint } = await sim.createBurnMintToken();
+await sim.deliver({ data: "tokens", token: { mint, amount: 7n } });
+await sim.connection.getTokenAccountBalance(sim.tokenAccountFor(mint));
+
 await sim.stop();
 ```
 
@@ -51,9 +58,9 @@ CcipSvmLocal.stop(): Promise<void>
 
 ## Scope
 
-This first slice targets **EVM → SVM** in local mode. Token transfers, SVM → EVM and forked
-networks are not implemented. Fork mode for the inbound direction is not possible in principle:
-a real OffRamp only accepts Chainlink's own committee and CCVs.
+This slice targets **EVM → SVM** in local mode, with data-only and BurnMint token transfers.
+SVM → EVM and forked networks are not implemented. Fork mode for the inbound direction is not
+possible in principle: a real OffRamp only accepts Chainlink's own committee and CCVs.
 
 See [`../../SOLANA-LOCAL-SCOPING.md`](../../SOLANA-LOCAL-SCOPING.md) for the decision memo and
 [`M0-FINDINGS.md`](M0-FINDINGS.md) for the spike evidence.

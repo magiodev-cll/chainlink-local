@@ -135,8 +135,7 @@ Surfpool instance**; a test needing both must run two validators.
    `f = 1`, two signatures over `keccak(report_bytes || report_context)`), which
    is a different but comparable amount of work. The 1.6 artifacts deploy the
    same way; only the bootstrap differs.
-2. **Token pools.** Untouched in both versions.
-3. **SVM→EVM.** Untouched.
+2. **SVM→EVM.** Untouched.
 
 ## Additional finding: signature library
 
@@ -149,6 +148,6 @@ do not swap the signer implementation without re-running the e2e test.
 
 ## Revised estimate
 
-- 2.0 inbound data-only: **done**.
+- 2.0 inbound data-only and BurnMint token transfers: **done**.
 - 1.6 inbound data-only: **+3–4 days** after the core exists.
 - The trust-layer risk is retired; remaining risk is ordinary implementation.

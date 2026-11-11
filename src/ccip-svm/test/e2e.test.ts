@@ -15,19 +15,27 @@ function surfpoolAvailable(): boolean {
 }
 
 test(
-  "delivers an EVM-originated CCIP message into a Solana receiver",
-  { timeout: 180_000, skip: !surfpoolAvailable() && "surfpool binary not available" },
+  "delivers EVM-originated messages and tokens into a Solana receiver",
+  { timeout: 300_000, skip: !surfpoolAvailable() && "surfpool binary not available" },
   async () => {
     const sim = await CcipSvmLocal.start();
     try {
-      const before = await sim.receiverCounterValue();
-      const result = await sim.deliver({ data: "hello from ethereum" });
-      const after = await sim.receiverCounterValue();
+      const dataResult = await sim.deliver({ data: "hello from ethereum" });
+      assert.equal(await sim.receiverCounterValue(), 1n);
+      assert.match(dataResult.messageId, /^[0-9a-f]{64}$/);
+      assert.ok(dataResult.resolutionTrace.includes("resolve_accounts_start"));
 
-      assert.equal(after, before + 1n, "receiver must observe exactly one delivery");
-      assert.match(result.messageId, /^[0-9a-f]{64}$/);
-      assert.ok(result.signature.length > 0);
-      assert.ok(result.resolutionTrace.includes("resolve_accounts_start"));
+      const { mint } = await sim.createBurnMintToken();
+      const ata = sim.tokenAccountFor(mint);
+      const tokenResult = await sim.deliver({
+        data: "tokens from ethereum",
+        token: { mint, amount: 7n },
+      });
+
+      assert.equal(await sim.receiverCounterValue(), 2n);
+      const balance = await sim.connection.getTokenAccountBalance(ata, "confirmed");
+      assert.equal(balance.value.amount, "7");
+      assert.ok(tokenResult.resolutionTrace.includes("resolve_accounts_execute_token_transfer_retrieve_lut_stage"));
     } finally {
       await sim.stop();
     }
