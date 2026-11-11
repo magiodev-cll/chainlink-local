@@ -97,8 +97,19 @@ Differences from 2.0 that shape the implementation:
   4. Build `CommitInput { price_updates: [], merkle_root: Some(MerkleRoot { ... }) }`,
      `raw_report = borsh(CommitInput)`, `report_context = [config_digest, 24 zero bytes || seq]`
   5. `offramp.commit(...)`
-  6. `derive_accounts_execute` (staged, same protocol as 2.0) then `execute`
-- Message encoding is `Any2SVMRampMessage`, and the leaf hash is **not** the 2.0 codec:
+  6. `deriveAccountsExecute(params, stage)` then `execute`. **The 1.6 derive protocol differs
+     from 2.0**: stages are strings passed as an argument (`"Start"`, `"FinishMainAccountList"`,
+     `"RetrieveTokenLUTs"`, `"RetrievePoolPrograms"`, `"TokenTransferStaticAccounts{token,page}"`,
+     `"NestedTokenDerive{..}"`), returned as `next_stage`, not a discriminator to call. It also
+     pages. `execute` itself takes one `rawExecutionReport` =
+     borsh(`ExecutionReportSingleChain { source_chain_selector, message, offchain_token_data,
+     proofs }`), not separate message/proof arguments.
+- `CommitInput { price_updates, merkle_root: Option<MerkleRoot>, rmn_signatures }`;
+  `MerkleRoot { source_chain_selector, on_ramp_address: Vec<u8>, min_seq_nr, max_seq_nr,
+  merkle_root: [u8;32] }`.
+- Message encoding is `Any2SVMRampMessage` (`header { message_id, source, dest, sequence_number,
+  nonce }`, `sender`, `data`, `token_receiver: Pubkey`, `token_amounts`, `extra_args
+  { compute_units, is_writable_bitmap }`), and the leaf hash is **not** the 2.0 codec:
   `keccak(domain_separator || "Any2SVMMessageHashV1" || be(source) || be(dest) ||
   u16(onRamp.len) || onRamp || messageId || tokenReceiver || be(seq) || borsh(extraArgs) ||
   be(nonce) || u16(sender.len) || sender || u16(data.len) || data || borsh(tokenAmounts) ||
