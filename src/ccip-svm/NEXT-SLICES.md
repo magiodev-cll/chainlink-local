@@ -8,6 +8,38 @@ The direction that completes the bridge. Two halves, and the EVM half already ex
 
 ### 1a. Solana send (hard part)
 
+**Status: `evm.ts` is done.** `deliverToEvm()` and `toAny2EvmMessage()` land and are unit
+tested. Only the Solana send below remains.
+
+#### Account map for `router.ccip_send` (v1 lane), derived from source
+
+- `dest_chain_state`: `[b"dest_chain_state", u64le(selector)]` under the router
+- `nonce`: `[b"nonce", u64le(selector), authority]` under the router
+- `fee_token_mint`: `So11111111111111111111111111111111111111112` for native fees
+- `fee_token_user_associated_account`: WSOL ATA of the sender
+- `fee_token_receiver`: WSOL ATA of the router's **fee billing signer** PDA
+- `fee_quoter_billing_token_config`: `[b"fee_billing_token_config", feeTokenMint]` under the
+  fee quoter — **a hard seeds constraint, not optional**
+- `fee_quoter_link_token_config`: `[b"fee_billing_token_config", linkMint]` under the fee
+  quoter — also a hard constraint, which is why the bootstrap LINK mint must be persisted
+- `fee_quoter_dest_chain`: `[b"dest_chain", u64le(selector)]` under the fee quoter
+
+Native fees: the router rewrites `message.fee_token` to the native mint and transfers SOL to the
+billing signer's ATA, so no token approval is needed.
+
+#### Minimal configuration
+
+1. `fee_quoter.add_dest_chain(selector, DestChainConfig { is_enabled: true, lane_code_version: 1,
+   max_number_of_tokens_per_msg, max_data_bytes, max_per_msg_gas_limit, ...zeroed gas fields })`
+2. `fee_quoter.add_billing_token_config` for **both** the native mint and the LINK mint, with
+   `usd_per_token = [0;28]` and `premium_multiplier_wei_per_eth = 0`
+3. `fee_quoter.add_price_updater(payer)` then `update_prices([], [{ selector, usd_per_unit_gas:
+   [0;28] }])`, or confirm a zero default price is accepted and skip both
+4. `router.add_chain_selector(selector, { lane_code_version: 1, allowed_senders: [],
+   allow_list_enabled: false })`
+5. `router.ccip_send(selector, { receiver, data, token_amounts: [], fee_token: PublicKey.default,
+   extra_args }, [])` — `ccip_send` returns the message id as program return data
+
 `router.ccip_send` (v1 lane) or `router.ccip_send_v2` (2.0 lane) on Surfpool. The v1 path is
 simpler and enough for a local demo.
 
