@@ -8,7 +8,11 @@ The direction that completes the bridge. Two halves, and the EVM half already ex
 
 ### 1a. Solana send (hard part)
 
-**Status: `evm.ts` is done.** `deliverToEvm()` and `toAny2EvmMessage()` land and are unit
+**Status: done.** `sim.send()` configures the Router/FeeQuoter lane and sends through the real
+Router; `evm.ts` is the other half. The account map below is kept as reference for the 1.6 port
+and for debugging.
+
+**Previously:** `evm.ts` is done. `deliverToEvm()` and `toAny2EvmMessage()` land and are unit
 tested. Only the Solana send below remains.
 
 #### Account map for `router.ccip_send` (v1 lane), derived from source

@@ -33,6 +33,8 @@ import {
 } from "./constants.js";
 import { resolveAccounts } from "./resolver.js";
 import { createBurnMintToken, tokenAccountFor } from "./tokens.js";
+import type { SendOptions } from "./outbound.js";
+import { configureSendLane, sendMessage } from "./outbound.js";
 import { confirmSignature, Surfpool } from "./surfpool.js";
 
 const { AnchorProvider, BN, Program, Wallet } = anchor;
@@ -109,6 +111,8 @@ export class CcipSvmLocal {
   private readonly offrampIdl: Idl;
   private readonly artifactsDir: string;
   private readonly provider: any;
+  private linkMint!: PublicKey;
+  private sendLaneReady = false;
 
   private constructor(
     surfpool: Surfpool,
@@ -220,6 +224,7 @@ export class CcipSvmLocal {
     // LINK stand-in mint: FeeQuoter validates ownership, nothing else uses it for inbound.
     // Built by hand because spl-token's createMint confirms over WebSocket.
     const linkMint = Keypair.generate();
+    this.linkMint = linkMint.publicKey;
     const mintRent = await this.surfpool.connection.getMinimumBalanceForRentExemption(82);
     const mintTx = new Transaction().add(
       SystemProgram.createAccount({
@@ -401,6 +406,33 @@ export class CcipSvmLocal {
 
   get connection() {
     return this.surfpool.connection;
+  }
+
+  /** LINK stand-in mint created during bootstrap (fee token config). */
+  get linkTokenMint(): PublicKey {
+    return this.linkMint;
+  }
+
+  /** Send an arbitrary-data message from Solana to the local EVM lane. */
+  async send(opts: SendOptions) {
+    if (!this.sendLaneReady) {
+      await configureSendLane(this.outboundHarness());
+      this.sendLaneReady = true;
+    }
+    return sendMessage(this.outboundHarness(), opts);
+  }
+
+  private outboundHarness() {
+    return {
+      connection: this.surfpool.connection,
+      payer: this.payer,
+      provider: this.provider,
+      linkMint: this.linkMint,
+      router: this.programs.router,
+      feeQuoter: this.programs.feeQuoter,
+      rmnRemote: this.programs.rmnRemote,
+      rpc: (method: string, params: unknown[]) => this.surfpool.rpc(method, params),
+    };
   }
 
   /** Deploy a BurnMint pool and wire a fresh SPL mint through the router registry. */

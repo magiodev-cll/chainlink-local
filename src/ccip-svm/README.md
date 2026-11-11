@@ -17,6 +17,9 @@ const { mint } = await sim.createBurnMintToken();
 await sim.deliver({ data: "tokens", token: { mint, amount: 7n } });
 await sim.connection.getTokenAccountBalance(sim.tokenAccountFor(mint));
 
+// outbound: a real Router send on the local EVM lane
+const sent = await sim.send({ receiver: Buffer.alloc(20, 0xab), data: "hello evm" });
+
 await sim.stop();
 ```
 
@@ -58,9 +61,11 @@ CcipSvmLocal.stop(): Promise<void>
 
 ## Scope
 
-This slice targets **EVM → SVM** in local mode, with data-only and BurnMint token transfers.
-SVM → EVM and forked networks are not implemented. Fork mode for the inbound direction is not
-possible in principle: a real OffRamp only accepts Chainlink's own committee and CCVs.
+This slice targets **EVM ↔ SVM** in local mode, with arbitrary data and BurnMint token transfers
+inbound and a real Router send outbound; pair `send()` with `deliverToEvm()` to complete the
+outbound direction against any EVM node. Forked networks are not implemented. Fork mode for the
+inbound direction is not possible in principle: a real OffRamp only accepts Chainlink's own
+committee and CCVs.
 
 See [`../../SOLANA-LOCAL-SCOPING.md`](../../SOLANA-LOCAL-SCOPING.md) for the decision memo and
 [`M0-FINDINGS.md`](M0-FINDINGS.md) for the spike evidence.

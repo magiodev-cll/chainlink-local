@@ -36,6 +36,11 @@ test(
       const balance = await sim.connection.getTokenAccountBalance(ata, "confirmed");
       assert.equal(balance.value.amount, "7");
       assert.ok(tokenResult.resolutionTrace.includes("resolve_accounts_execute_token_transfer_retrieve_lut_stage"));
+
+      // Outbound: a real Router send on the local EVM lane.
+      const sent = await sim.send({ receiver: Buffer.alloc(20, 0xab), data: "hello evm" });
+      assert.match(sent.messageId ?? "", /^[0-9a-f]{64}$/);
+      assert.ok(sent.signature.length > 0);
     } finally {
       await sim.stop();
     }
