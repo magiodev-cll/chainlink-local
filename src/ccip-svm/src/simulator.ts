@@ -71,6 +71,10 @@ export interface DeliverOptions {
   receiverProgram?: PublicKey;
   /** Receiver accounts carried in the dest blob (after the three fixed CPI accounts). */
   receiverAccounts?: PublicKey[];
+  /** Writability bitmap for `receiverAccounts`. Defaults to the first two accounts writable. */
+  receiverWritableBitmap?: bigint;
+  /** Source on-ramp address bytes carried in the message. Defaults to a 20-byte sentinel. */
+  onRampAddress?: Uint8Array;
   /** Token transfer. The receiver is a wallet; its ATA is derived and created on delivery. */
   token?: {
     mint: PublicKey;
@@ -519,7 +523,7 @@ export class CcipSvmLocal {
       messageNumber: 1n,
       executionGasLimit: 200_000,
       ccipReceiveGasLimit: 200_000,
-      onRampAddress: SENTINEL_ONRAMP,
+      onRampAddress: opts.onRampAddress ?? SENTINEL_ONRAMP,
       offRampAddress: offrampId.toBuffer(),
       sender: opts.sender ?? DEFAULT_SENDER,
       receiver: receiverProgram.toBuffer(),
@@ -527,7 +531,7 @@ export class CcipSvmLocal {
         // 0 = DeriveAtaAndCreate. Pool v1 rejects UseAsIs.
         useAta: 0,
         accounts: receiverAccounts,
-        accountIsWritableBitmap: 0b11n,
+        accountIsWritableBitmap: opts.receiverWritableBitmap ?? 0b11n,
       }),
       tokenTransfer: opts.token
         ? encodeTokenTransfer({
