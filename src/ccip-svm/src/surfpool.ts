@@ -140,6 +140,23 @@ export class Surfpool {
     }
   }
 
+  /**
+   * Write an account's state directly.
+   *
+   * Useful for fixtures that normally arrive as validator genesis accounts (global configs,
+   * snapshots) when the owning program has no local initializer.
+   */
+  async setAccount(
+    address: PublicKey,
+    account: { lamports?: number; owner?: PublicKey; data?: Uint8Array },
+  ): Promise<void> {
+    const patch: Record<string, unknown> = {};
+    if (account.lamports !== undefined) patch.lamports = account.lamports;
+    if (account.owner) patch.owner = account.owner.toBase58();
+    if (account.data) patch.data = Buffer.from(account.data).toString("hex");
+    await this.rpc("surfnet_setAccount", [address.toBase58(), patch]);
+  }
+
   async setProgramAuthority(programId: PublicKey, authority: PublicKey): Promise<void> {
     await this.rpc("surfnet_setProgramAuthority", [
       programId.toBase58(),
