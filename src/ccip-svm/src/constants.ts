@@ -23,7 +23,6 @@ export const CCV_VERSION_TAG = Uint8Array.from([0xe9, 0xa0, 0x5a, 0x20]);
 
 export const BPF_LOADER_UPGRADEABLE = new PublicKey("BPFLoaderUpgradeab1e11111111111111111111111");
 
-export const PROGRAM_DATA_SEED = "reference_addresses";
 export const SEEDS = {
   config: "config",
   curses: "curses",

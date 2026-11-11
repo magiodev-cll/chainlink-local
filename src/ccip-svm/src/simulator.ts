@@ -30,7 +30,6 @@ import {
   SVM_CHAIN_SELECTOR,
   pda,
   programDataAddress,
-  u64LeBytes,
 } from "./constants.js";
 import { resolveAccounts } from "./resolver.js";
 import { createBurnMintToken, tokenAccountFor } from "./tokens.js";
@@ -207,15 +206,12 @@ export class CcipSvmLocal {
       bundleDir,
       provider,
     );
-    await sim.bootstrap(ids, idls);
+    await sim.bootstrap(ids);
     debug("bootstrap complete");
     return sim;
   }
 
-  private async bootstrap(
-    ids: Record<keyof typeof PROGRAM_IDS, PublicKey>,
-    idls: Record<keyof typeof PROGRAM_IDS, Idl>,
-  ): Promise<void> {
+  private async bootstrap(ids: Record<keyof typeof PROGRAM_IDS, PublicKey>): Promise<void> {
     const authority = this.payer.publicKey;
     const programData = programDataAddress;
     const selector = Buffer.from(new BN(EVM_CHAIN_SELECTOR.toString()).toArray("le", 8));

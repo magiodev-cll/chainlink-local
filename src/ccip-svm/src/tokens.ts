@@ -6,7 +6,6 @@ import {
   PublicKey,
   SystemProgram,
   Transaction,
-  TransactionInstruction,
 } from "@solana/web3.js";
 import {
   TOKEN_PROGRAM_ID,
@@ -270,4 +269,3 @@ export function tokenAccountFor(mint: PublicKey, owner: PublicKey): PublicKey {
   return getAssociatedTokenAddressSync(mint, owner);
 }
 
-export type { TransactionInstruction };

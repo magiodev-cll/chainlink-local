@@ -146,8 +146,8 @@ export class Surfpool {
     ]);
   }
 
-  async airdrop(to: Keypair | PublicKey, lamports: number): Promise<void> {
-    const pubkey = to instanceof Keypair ? to.publicKey : to;
+  async airdrop(to: Keypair, lamports: number): Promise<void> {
+    const pubkey = to.publicKey;
     const sig = await this.connection.requestAirdrop(pubkey, lamports);
     await confirmSignature(this.connection, sig);
   }

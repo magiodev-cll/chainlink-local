@@ -9,7 +9,6 @@ export {
   SEEDS,
   pda,
   programDataAddress,
-  u64LeBytes,
 } from "./constants.js";
 export {
   decodeMessage,
