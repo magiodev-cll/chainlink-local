@@ -60,7 +60,8 @@ export async function confirmSignature(
  * A Surfpool instance, either spawned by the harness or attached to one the user already runs.
  *
  * Spawning always uses `--offline --no-deploy --no-tui --no-studio --ci`: no datasource, no
- * generated runbook, no TUI, no Studio, and a non-interactive process suitable for CI.
+ * generated runbook, no TUI, no Studio, and a non-interactive process suitable for CI. Pass
+ * `wsPort` when a client (for example Anchor's provider) expects the WebSocket at a fixed port.
  */
 export class Surfpool {
   readonly connection: Connection;
@@ -73,10 +74,10 @@ export class Surfpool {
     this.child = child;
   }
 
-  static async start(opts: { bin?: string; port?: number } = {}): Promise<Surfpool> {
+  static async start(opts: { bin?: string; port?: number; wsPort?: number } = {}): Promise<Surfpool> {
     const bin = opts.bin ?? process.env.SURFPOOL_BIN ?? "surfpool";
     const port = opts.port ?? (await freePort());
-    const wsPort = await freePort();
+    const wsPort = opts.wsPort ?? (await freePort());
     const url = `http://127.0.0.1:${port}`;
 
     const child = spawn(
