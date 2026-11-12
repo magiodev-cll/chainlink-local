@@ -242,3 +242,77 @@ fix the WS port when an Anchor provider is involved.
 **Determinism.** Identical message bytes produce an identical message id; a receiver that tracks
 processed ids treats a repeat as a no-op. `deliver({ messageNumber })` exists to make repeats
 distinct.
+
+## Appendix: outbound send (v1) reference
+
+Implemented in `configureSendLane` and `sendMessage`. The account map below is what the code does.
+
+- `dest_chain_state`: `[b"dest_chain_state", u64le(selector)]` under the router
+- `nonce`: `[b"nonce", u64le(selector), authority]` under the router
+- `fee_token_mint`: `So11111111111111111111111111111111111111112` for native fees
+- `fee_token_user_associated_account`: the **zero pubkey** when paying native
+- `fee_token_receiver`: WSOL ATA of the router's `[b"fee_billing_signer"]` PDA
+- `fee_quoter_billing_token_config`: `[b"fee_billing_token_config", feeTokenMint]` under the fee
+  quoter — a hard seeds constraint, not optional
+- `fee_quoter_link_token_config`: `[b"fee_billing_token_config", linkMint]` under the fee quoter
+  — also a hard constraint, which is why the bootstrap LINK mint is persisted on the instance
+- `fee_quoter_dest_chain`: `[b"dest_chain", u64le(selector)]` under the fee quoter
+
+Two findings that only surfaced by running it:
+
+1. **RMN event authorities.** The router emits `CCIPMessageSent` through RMN's `cpi_event`, signed
+   by its fee-billing-signer PDA. RMN must list that PDA in `event_authorities`
+   (`rmn_remote.set_event_authorities`) or every send reverts `Unauthorized`.
+2. **Non-zero prices and gas.** `add_dest_chain` rejects a zero `default_tx_gas_limit`; `get_fee`
+   rejects a zero token price (`InvalidTokenPrice`) and a non-zero `linkFeeMultiplierPercent` is
+   required on the v2 fee config. The local lane uses synthetic values: token price `1e18`, gas
+   price `1`, gas multiplier `100`.
+
+Native fees: pass `fee_token: PublicKey.default`; the router rewrites it to the native mint and
+transfers SOL to the billing signer's ATA, so no token approval is needed.
+
+## Appendix: 1.6 adapter reference
+
+### 2. CCIP 1.6 adapter
+
+**Verified this session:** the `solana-v1.6.2` binaries deploy to Surfpool 1.7 and report
+`executable: true` (offramp, router, fee quoter, rmn remote, test receiver). The runtime is not
+a blocker.
+
+Differences from 2.0 that shape the implementation:
+
+- OffRamp id differs (`offqSMQ…` vs `off43sBHB…`); the **router id is the same** but the binary
+  differs, so 1.6 and 2.0 cannot share a Surfpool instance. One adapter per process, already
+  documented in the memo.
+- Trust layer is OCR3, not CCV. Sequence:
+  1. `offramp.initialize` + `initialize_config`
+  2. `rmn_remote.initialize`, `fee_quoter.initialize`, `router.initialize` + `add_offramp`
+  3. `offramp.set_ocr_config` with `f = 1` and, critically,
+     `is_signature_verification_enabled = 0`. `ocr3_set` only requires `f != 0`; with
+     verification off, `commit` needs no signatures at all, which removes the secp256k1
+     recovery-parity work entirely.
+  4. Build `CommitInput { price_updates: [], merkle_root: Some(MerkleRoot { ... }) }`,
+     `raw_report = borsh(CommitInput)`, `report_context = [config_digest, 24 zero bytes || seq]`
+  5. `offramp.commit(...)`
+  6. `deriveAccountsExecute(params, stage)` then `execute`. **The 1.6 derive protocol differs
+     from 2.0**: stages are strings passed as an argument (`"Start"`, `"FinishMainAccountList"`,
+     `"RetrieveTokenLUTs"`, `"RetrievePoolPrograms"`, `"TokenTransferStaticAccounts{token,page}"`,
+     `"NestedTokenDerive{..}"`), returned as `next_stage`, not a discriminator to call. It also
+     pages. `execute` itself takes one `rawExecutionReport` =
+     borsh(`ExecutionReportSingleChain { source_chain_selector, message, offchain_token_data,
+     proofs }`), not separate message/proof arguments.
+- `CommitInput { price_updates, merkle_root: Option<MerkleRoot>, rmn_signatures }`;
+  `MerkleRoot { source_chain_selector, on_ramp_address: Vec<u8>, min_seq_nr, max_seq_nr,
+  merkle_root: [u8;32] }`.
+- Message encoding is `Any2SVMRampMessage` (`header { message_id, source, dest, sequence_number,
+  nonce }`, `sender`, `data`, `token_receiver: Pubkey`, `token_amounts`, `extra_args
+  { compute_units, is_writable_bitmap }`), and the leaf hash is **not** the 2.0 codec:
+  `keccak(domain_separator || "Any2SVMMessageHashV1" || be(source) || be(dest) ||
+  u16(onRamp.len) || onRamp || messageId || tokenReceiver || be(seq) || borsh(extraArgs) ||
+  be(nonce) || u16(sender.len) || sender || u16(data.len) || data || borsh(tokenAmounts) ||
+  remainingAccounts)`. Single-leaf merkle root = the leaf.
+- The 1.6 `test_ccip_receiver` needs its router-level `allowed_offramp` PDA (same as 2.0) plus a
+  per-sender approval PDA (`approve_sender`), unlike the 2.0 test receiver.
+
+Reference: `chainlink-ccip/chains/solana/utils/ccip/ccip_messages.go` (`HashAny2SVMMessage`,
+`MerkleFrom`, `SignCommitReport`).
