@@ -12,9 +12,9 @@ import path from "node:path";
  * drifting into a new program version.
  */
 export const ARTIFACTS = {
-  version: "2.0.0-latest+b9ee948",
+  version: "2.0.0-latest+2026-11-12",
   url: "https://github.com/smartcontractkit/chainlink-ccip-solana/releases/download/latest/artifacts.tar.gz",
-  sha256: "29ea1705b5c06181f326886ac67feee10e327a94fb02e3509b624501c1a0fdbc",
+  sha256: "955b7b0e4a4842e8e97734753d9a5516c05cbd182ba8974a4d276fdc7e407097",
 } as const;
 
 function cacheRoot(): string {
