@@ -67,5 +67,5 @@ outbound direction against any EVM node. Forked networks are not implemented. Fo
 inbound direction is not possible in principle: a real OffRamp only accepts Chainlink's own
 committee and CCVs.
 
-See [`../../SOLANA-LOCAL-SCOPING.md`](../../SOLANA-LOCAL-SCOPING.md) for the decision memo and
-[`M0-FINDINGS.md`](M0-FINDINGS.md) for the spike evidence.
+See [`../../PLAN.md`](../../PLAN.md) for the decision, progress, backlog and the hard-won
+implementation facts.
