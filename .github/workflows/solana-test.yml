@@ -1,0 +1,58 @@
+name: Solana (CCIP SVM simulator)
+
+on:
+  pull_request:
+    paths:
+      - 'src/ccip-svm/**'
+      - '.github/workflows/solana-test.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'src/ccip-svm/**'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: solana-test-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: '22'
+  SURFPOOL_VERSION: v1.7.0
+
+jobs:
+  simulator:
+    name: CCIP SVM simulator (build + e2e)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Surfpool
+        run: |
+          curl -sL -o surfpool.tar.gz \
+            "https://github.com/solana-foundation/surfpool/releases/download/${SURFPOOL_VERSION}/surfpool-linux-x64.tar.gz"
+          mkdir -p "$RUNNER_TEMP/surfpool"
+          tar -xzf surfpool.tar.gz -C "$RUNNER_TEMP/surfpool"
+          echo "$RUNNER_TEMP/surfpool" >> "$GITHUB_PATH"
+
+      - name: Use Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: src/ccip-svm/package-lock.json
+
+      - name: Install dependencies
+        working-directory: src/ccip-svm
+        run: npm ci
+
+      - name: Build and test
+        working-directory: src/ccip-svm
+        env:
+          CCIP_SVM_DEBUG: '1'
+        run: npm test
