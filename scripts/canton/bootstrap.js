@@ -7,11 +7,14 @@ import { instanceAddress, variant } from "./sandbox.js";
 export const PACKAGES = {
   factory: "cd7b0a067409cab6c20213829cfad5388cf7f669d1e2561dc406a44ef058082e",
   runtime: "00ce3527b21ca012761fa58fae105954103a62bc4d72a2018d001b32b79a11a9",
+  api: "7fffaf108129d37413d8edfbd91ffe373051b2cb0621c26e245093c6138daf58",
   receiver: "95c3cdc53c172c7202f5b2711ad01d591c84e0aa00cbce4fd0d9ad8f75c11552",
 };
 
 export const FACTORY = `${PACKAGES.factory}:CCIP.FactoryV2:CCIPFactory`;
 export const ROUTER_FACTORY = `${PACKAGES.runtime}:CCIP.RuntimeV2.PerPartyRouter:PerPartyRouterFactory`;
+export const ROUTER_TEMPLATE = `${PACKAGES.runtime}:CCIP.RuntimeV2.PerPartyRouter:PerPartyRouter`;
+export const EXECUTING_MESSAGE_INTERFACE = `${PACKAGES.api}:CCIP.APIV2.ExecutingMessage:IExecutingMessage`;
 export const RECEIVER = `${PACKAGES.receiver}:CCIP.CCIPReceiver:CCIPReceiver`;
 
 /** A local instance id. Every CCIP contract in the instance is addressed as `<instanceId>@<party>`. */
@@ -195,6 +198,9 @@ export async function bootstrap({
   );
   if (!router) throw new Error("CreateRouter produced no PerPartyRouter");
   log("CreateRouter: ok");
+
+  at.chainSelector = chainSelector;
+  at.routerTemplate = ROUTER_TEMPLATE;
 
   return { factory, router: router.contractId, addresses: at, deployed };
 }

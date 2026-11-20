@@ -4,7 +4,8 @@
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import { listDars, resolveArtifacts } from "./artifacts.js";
-import { bootstrap, PACKAGES, RECEIVER } from "./bootstrap.js";
+import { bootstrap, PACKAGES, RECEIVER, ROUTER_TEMPLATE } from "./bootstrap.js";
+import { deliver } from "./deliver.js";
 import { dpmPath, ledger, startSandbox, variant } from "./sandbox.js";
 
 // `canton-localnet`, per chain-selectors. The local participant plays this chain.
@@ -62,7 +63,20 @@ async function main() {
     log(`CCIPReceiver: ${receiver.slice(0, 16)}...`);
     log(`router: ${router.slice(0, 16)}... at ${addresses.routerFactory.unpack}`);
 
-    console.log("\nPASS: CCIP 2.0 trust layer deployed on a local Canton participant.");
+    const result = await deliver({
+      api,
+      owner: alice,
+      router,
+      deployed,
+      addresses,
+      receiverParty: alice,
+      sourceChainSelector: ETHEREUM_SEPOLIA_SELECTOR,
+      data: Buffer.from("hello from ethereum").toString("hex"),
+      log,
+    });
+    log(`delivered: ${result.messageId}`);
+
+    console.log("\nPASS: CCIP message executed on a local Canton participant.");
   } finally {
     await sandbox.stop();
   }
