@@ -3,7 +3,7 @@
 
 import assert from "node:assert/strict";
 import test from "node:test";
-import { bytesToHex, encodeMessageV1, finalityConfig, hashAddress, hexToBytes } from "./codec.js";
+import { bytesToHex, encodeMessageV1, finalityConfig, hashAddress, hexToBytes } from "../../../scripts/canton/codec.js";
 
 const EXPECTED =
   "01" +

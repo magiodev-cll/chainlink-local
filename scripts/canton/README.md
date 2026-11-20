@@ -10,7 +10,7 @@ Yes to both. There is no `deliver()` yet.
 Verified on macOS arm64, Canton 3.4.11:
 
 ```
-$ node scripts/canton/probe.js
+$ node --test test/smoke/canton/delivery.test.js
 [canton] 45 CCIP DARs from the pinned release
 [canton] packages on ledger: 82, including CCIP.FactoryV2
 [canton] DeployGlobalConfig: ok
@@ -31,11 +31,11 @@ $ node scripts/canton/probe.js
 PASS: CCIP message executed on a local Canton participant.
 ```
 
-So the probe deploys a complete CCIP instance, creates a per-party router and a receiver, then
+So the smoke test deploys a complete CCIP instance, creates a per-party router and a receiver, then
 delivers a message through the real `OffRamp`: `PrepareExecute`, a CCV verification, `Execute`.
 A cold run takes about 60 seconds and exits clean.
 
-`node --test scripts/canton/codec.test.js` checks the message encoder byte for byte against the
+`node --test test/unit/canton/codec.test.js` checks the message encoder byte for byte against the
 Daml encoder in the released DAR.
 
 ## What is not built
@@ -84,4 +84,4 @@ are why `bootstrap.js` looks verbose.
 - `sandbox.js` starts and stops the daemon, wraps the JSON API, and encodes the small Daml types.
 - `bootstrap.js` deploys the CCIP instance and creates the router.
 - `deliver.js` builds a message, calls `PrepareExecute`, adds the CCV verification and executes.
-- `probe.js` is the runnable check above.
+
