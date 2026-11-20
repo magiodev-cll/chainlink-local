@@ -88,15 +88,29 @@ export function ledger(baseUrl) {
     packages: async () => (await call("GET", "packages")).packageIds,
     parties: async () => (await call("GET", "parties")).partyDetails.map((p) => p.party),
     allocateParty: async (hint) => (await call("POST", "parties", { partyIdHint: hint })).partyDetails.party,
-    async create(templateId, createArguments, actAs) {
-      const res = await call("POST", "commands/submit-and-wait", {
-        commandId: crypto.randomUUID(),
-        commands: [{ CreateCommand: { templateId, createArguments } }],
-        userId: "participant_admin",
-        actAs: [actAs],
-        readAs: [],
+
+    /** Submits commands and returns the created events, which carry the new contract ids. */
+    async submit(commands, actAs) {
+      const res = await call("POST", "commands/submit-and-wait-for-transaction", {
+        commands: {
+          commandId: crypto.randomUUID(),
+          commands,
+          userId: "participant_admin",
+          actAs: [actAs],
+          readAs: [],
+        },
       });
-      return res.updateId;
+      return res.transaction.events.filter((e) => e.CreatedEvent).map((e) => e.CreatedEvent);
+    },
+
+    async create(templateId, createArguments, actAs) {
+      const [created] = await this.submit([{ CreateCommand: { templateId, createArguments } }], actAs);
+      if (!created) throw new Error(`create ${templateId} produced no contract`);
+      return created.contractId;
+    },
+
+    async exercise(templateId, contractId, choice, choiceArgument, actAs) {
+      return this.submit([{ ExerciseCommand: { templateId, contractId, choice, choiceArgument } }], actAs);
     },
   };
 }
@@ -104,6 +118,11 @@ export function ledger(baseUrl) {
 /** Daml variants encode as `{"tag": "Name", "value": ...}`; nullary constructors still need the key. */
 export function variant(tag, value = {}) {
   return { tag, value };
+}
+
+/** `Chainlink.InstanceAddress.RawInstanceAddress` is newtype `RawInstanceAddress Text`, encoded as `{"unpack": ...}`. */
+export function instanceAddress(instanceId, party) {
+  return { unpack: `${instanceId}@${party}` };
 }
 
 function tail(text, lines = 40) {

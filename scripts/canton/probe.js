@@ -4,10 +4,11 @@
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import { listDars, resolveArtifacts } from "./artifacts.js";
+import { bootstrap, PACKAGES, RECEIVER } from "./bootstrap.js";
 import { dpmPath, ledger, startSandbox, variant } from "./sandbox.js";
 
-// Pinned by the release digest in artifacts.js; the module is `CCIP.CCIPReceiver`.
-const CCIP_RECEIVER_PACKAGE = "95c3cdc53c172c7202f5b2711ad01d591c84e0aa00cbce4fd0d9ad8f75c11552";
+// `canton-localnet`, per chain-selectors. The local participant plays this chain.
+const CANTON_LOCALNET_SELECTOR = "8706591216959472610";
 
 const log = (line) => console.log(`[canton] ${line}`);
 
@@ -30,16 +31,24 @@ async function main() {
     const api = ledger(sandbox.url);
 
     // The sandbox reports ready before it finishes loading DARs, so poll for the package we need.
-    const packages = await waitForPackage(api, CCIP_RECEIVER_PACKAGE);
-    log(`packages on ledger: ${packages.length}, including CCIP.CCIPReceiver`);
+    const packages = await waitForPackage(api, PACKAGES.factory);
+    log(`packages on ledger: ${packages.length}, including CCIP.FactoryV2`);
 
     const alice = await api.allocateParty("alice");
     log(`party: ${alice}`);
 
-    const updateId = await api.create(
-      `${CCIP_RECEIVER_PACKAGE}:CCIP.CCIPReceiver:CCIPReceiver`,
+    const { addresses, deployed, router } = await bootstrap({
+      api,
+      owner: alice,
+      chainSelector: CANTON_LOCALNET_SELECTOR,
+      log,
+    });
+    log(`${Object.keys(deployed).length} CCIP contracts deployed`);
+
+    const receiver = await api.create(
+      RECEIVER,
       {
-        instanceId: "local-receiver",
+        instanceId: "chainlink-local-receiver",
         owner: alice,
         requiredCCVs: [],
         optionalCCVs: [],
@@ -48,9 +57,10 @@ async function main() {
       },
       alice,
     );
-    log(`created CCIP.CCIPReceiver, update ${updateId}`);
+    log(`CCIPReceiver: ${receiver.slice(0, 16)}...`);
+    log(`router: ${router.slice(0, 16)}... at ${addresses.routerFactory.unpack}`);
 
-    console.log("\nPASS: real CCIP contracts live on a local Canton participant.");
+    console.log("\nPASS: CCIP 2.0 trust layer deployed on a local Canton participant.");
   } finally {
     await sandbox.stop();
   }

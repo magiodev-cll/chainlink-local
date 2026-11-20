@@ -1,36 +1,47 @@
 # Canton spike
 
-An experiment, not a product. It answers one question: can `chainlink-local` run the real CCIP
-Daml contracts on a local Canton participant? So far: yes.
+An experiment, not a product. It answers two questions: can `chainlink-local` run the real CCIP
+Daml contracts on a local Canton participant, and can it deploy a complete trust layer there?
 
-Nothing here simulates CCIP yet. There is no `deliver()` and no message codec. The point is to
-de-risk the toolchain before anyone designs an API.
+Yes to both. There is no `deliver()` yet.
 
 ## What works
 
 Verified on macOS arm64, Canton 3.4.11:
 
-- The upstream release `contracts/v2.3.0` of `chainlink-canton` is pinned by sha256 and unpacked
-  to a cache. It ships 45 prebuilt `.dar` files, so nothing is compiled locally.
-- `dpm sandbox` runs a full single-process Canton with an in-memory ledger.
-- All 45 DARs load into that sandbox, including `CCIP.CCIPReceiver`, `CCIP.CommitteeVerifierV2`,
-  `CCIP.RuntimeV2` and the token pools.
-- Parties are allocated and a `CCIP.CCIPReceiver` is created, over plain HTTP.
+```
+$ node scripts/canton/probe.js
+[canton] 45 CCIP DARs from the pinned release
+[canton] sandbox up: ledger API 6865, JSON API 6864
+[canton] packages on ledger: 82, including CCIP.FactoryV2
+[canton] DeployGlobalConfig: ok
+[canton] DeployRMNRemote: ok
+[canton] DeployTokenAdminRegistry: ok
+[canton] DeployFeeQuoter: ok
+[canton] DeployCommitteeVerifier: ok
+[canton] DeployExecutor: ok
+[canton] DeployOffRamp: ok
+[canton] DeployOnRamp: ok
+[canton] DeployPerPartyRouterFactory: ok
+[canton] CreateRouter: ok
+[canton] 9 CCIP contracts deployed
+[canton] CCIPReceiver: 00ea4082...
+[canton] router: 0076f3ac... at chainlink-local-router-factory@alice::12206b26...
 
-```bash
-export JAVA_HOME=/opt/homebrew/opt/openjdk@17
-node scripts/canton/probe.js
+PASS: CCIP 2.0 trust layer deployed on a local Canton participant.
 ```
 
-Expected: `PASS: real CCIP contracts live on a local Canton participant.`
+That is a complete CCIP instance: global config, RMN remote, token admin registry, fee quoter,
+committee verifier, executor, offRamp, onRamp, a router factory and a per-party router, plus a
+receiver contract. A cold run takes about 50 seconds and exits clean.
 
 ## What is not built
 
-- No CCIP trust layer bootstrap. `PerPartyRouter`, `CommitteeVerifierV2`, `FeeQuoter` and
-  `RMNRemote` all need initialising before a message can execute, the way `bootstrap()` does for
-  Solana in the `feat/svm-local` branch.
-- No message construction. `MessageCodecV1.daml` defines the format on this side.
-- No token pools wired to a registry.
+- **Message delivery.** `PerPartyRouter.Execute` needs an `ExecutingMessage` built by
+  `MessageCodecV1.daml`, plus verifier results for each CCV. That is the next piece, and it is the
+  Canton analogue of the Solana `codec.ts` work.
+- **Token pools.** The template exists in the DARs and the factory can deploy it, but no pool is
+  registered in the token admin registry.
 
 ## Toolchain facts
 
@@ -43,14 +54,27 @@ These cost time to find and are not in the tutorials:
 | Ports | JSON API 6864, Ledger API gRPC 6865, admin 6866. `--canton-port-file <file>` writes them once ready. |
 | Readiness | The sandbox prints "ready" *before* it finishes ingesting DARs. Poll `/v2/packages` for the package id you need. |
 | Party allocation | `POST /v2/parties` with `{"partyIdHint": "alice"}`. No Daml tooling needed. |
-| Command id | `POST /v2/commands/submit-and-wait` requires a `commandId` UUID, not just `commands`. |
-| Daml variants | Encoded as `{"tag": "WaitForSafe", "value": {}}`. A nullary constructor still needs the `value` key, otherwise the ledger fails with `key not found: value`. |
-| Default user | `participant_admin`, already present in a fresh sandbox. |
-| Stopping it | `dpm` execs a JVM, so killing the launcher leaves Canton running. Spawn detached and signal the process group. |
-| Ingest time | All 45 DARs settle at 82 registered packages, and it takes a few seconds after "ready" to get there. |
+| Command submission | `submit-and-wait-for-transaction` wraps everything in a `commands` key and returns the created events, which is how you get new contract ids. |
+| Daml `Map` | Encodes as an array of `{key, value}` pairs, so an empty map is `[]`. |
+| Daml `Set` | Is a newtype over `Map`, so an empty set is `{"map": []}`. |
+| Daml variants | `{"tag": "WaitForSafe", "value": {}}`. A nullary constructor still needs the `value` key. |
+| `RawInstanceAddress` | Newtype over `Text` but encodes as `{"unpack": "<instanceId>@<party>"}`. |
+| Template ids | `<packageId>:<Module>:<Entity>`, for example `...:CCIP.CoreV2.GlobalConfig:GlobalConfig`. |
+| `dpm` shutdown | `dpm` execs a JVM, so killing the launcher leaves Canton running. Spawn detached and signal the process group. |
+
+## Why the factory matters
+
+`CCIPFactory` is the upstream bootstrap API: one contract with a choice per CCIP component, and
+each choice consumes the factory and returns a new one. That means the harness never hardcodes
+contract construction, it just drives the same choices a production deployment drives.
+
+The one catch: each choice takes the **fully built contract**, not a params record, so the harness
+has to construct the same record the factory's own `mk*Contract` helpers would. Those field lists
+are why `bootstrap.js` looks verbose.
 
 ## Files
 
 - `artifacts.js` pins the release, verifies sha256, unpacks to `~/.cache/chainlink-local/canton`.
-- `sandbox.js` starts and stops the daemon and wraps the JSON API.
+- `sandbox.js` starts and stops the daemon, wraps the JSON API, and encodes the small Daml types.
+- `bootstrap.js` deploys the CCIP instance and creates the router.
 - `probe.js` is the runnable check above.
