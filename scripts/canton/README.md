@@ -10,9 +10,8 @@ Yes to both. There is no `deliver()` yet.
 Verified on macOS arm64, Canton 3.4.11:
 
 ```
-$ node scripts/canton/probe.js
+$ node --test test/smoke/canton/delivery.test.js
 [canton] 45 CCIP DARs from the pinned release
-[canton] sandbox up: ledger API 6865, JSON API 6864
 [canton] packages on ledger: 82, including CCIP.FactoryV2
 [canton] DeployGlobalConfig: ok
 [canton] DeployRMNRemote: ok
@@ -25,26 +24,28 @@ $ node scripts/canton/probe.js
 [canton] DeployPerPartyRouterFactory: ok
 [canton] CreateRouter: ok
 [canton] 9 CCIP contracts deployed
-[canton] CCIPReceiver: 00ea4082...
-[canton] router: 0076f3ac... at chainlink-local-router-factory@alice::12206b26...
+[canton] CCIPReceiver: 0005b3b1...
+[canton] message id 0xb38f804fc7c56d93ef1a4a96e739347515cfe96c8f0712e347d20e6134bc8e9b
+[canton] delivered: 0xb38f804f...
 
-PASS: CCIP 2.0 trust layer deployed on a local Canton participant.
+PASS: CCIP message executed on a local Canton participant.
 ```
 
-That is a complete CCIP instance: global config, RMN remote, token admin registry, fee quoter,
-committee verifier, executor, offRamp, onRamp, a router factory and a per-party router, plus a
-receiver contract. A cold run takes about 50 seconds and exits clean.
+So the smoke test deploys a complete CCIP instance, creates a per-party router and a receiver, then
+delivers a message through the real `OffRamp`: `PrepareExecute`, a CCV verification, `Execute`.
+A cold run takes about 60 seconds and exits clean.
 
-The global config carries a source lane for Ethereum Sepolia with the committee verifier as a
-lane-mandated CCV, so the instance is ready to accept an inbound message.
+`node --test test/unit/canton/codec.test.js` checks the message encoder byte for byte against the
+Daml encoder in the released DAR.
 
 ## What is not built
 
-- **Message delivery.** `PerPartyRouter.Execute` needs an `ExecutingMessage` built by
-  `MessageCodecV1.daml`, plus verifier results for each CCV. That is the next piece, and it is the
-  Canton analogue of the Solana `codec.ts` work.
-- **Token pools.** The template exists in the DARs and the factory can deploy it, but no pool is
-  registered in the token admin registry.
+- **Token transfers.** The pool templates ship and the factory can deploy them, but no pool is
+  registered in the token admin registry and the inbound pool verification step is not wired.
+- **Real committee signatures.** The verifier is lane-mandated, and the probe satisfies it the
+  way the upstream Daml tests do, by adding the verification directly. Running ECDSA means
+  signing after party allocation, because the receiver field is a hash of a party.
+- **The EVM half.** A `routeToCanton()` alongside the existing `routeToSvm()`.
 
 ## Toolchain facts
 
@@ -63,6 +64,8 @@ These cost time to find and are not in the tutorials:
 | Daml variants | `{"tag": "WaitForSafe", "value": {}}`. A nullary constructor still needs the `value` key. |
 | `RawInstanceAddress` | Newtype over `Text` but encodes as `{"unpack": "<instanceId>@<party>"}`. |
 | Template ids | `<packageId>:<Module>:<Entity>`, for example `...:CCIP.CoreV2.GlobalConfig:GlobalConfig`. |
+| `AddCCVVerification` | Returns a new `ExecutingMessage` and archives the one passed in. Using the old contract id afterwards fails with `CONTRACT_NOT_FOUND`. |
+| At least one CCV | The OffRamp refuses a message with no required CCV, so the lane must mandate one and the message must carry its verification. |
 | `dpm` shutdown | `dpm` execs a JVM, so killing the launcher leaves Canton running. Spawn detached and signal the process group. |
 
 ## Why the factory matters
@@ -80,4 +83,5 @@ are why `bootstrap.js` looks verbose.
 - `artifacts.js` pins the release, verifies sha256, unpacks to `~/.cache/chainlink-local/canton`.
 - `sandbox.js` starts and stops the daemon, wraps the JSON API, and encodes the small Daml types.
 - `bootstrap.js` deploys the CCIP instance and creates the router.
-- `probe.js` is the runnable check above.
+- `deliver.js` builds a message, calls `PrepareExecute`, adds the CCV verification and executes.
+
