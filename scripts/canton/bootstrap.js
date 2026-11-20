@@ -21,7 +21,15 @@ export const INSTANCE_ID = "chainlink-local";
  * Deploys global config, RMN remote, token admin registry, fee quoter, committee verifier,
  * executor, offRamp, onRamp and the router factory. Returns the deployed contract ids.
  */
-export async function bootstrap({ api, owner, chainSelector, versionTag = "e9a05a20", log = () => {} }) {
+export async function bootstrap({
+  api,
+  owner,
+  chainSelector,
+  sourceChainSelector,
+  sourceOnRamp = `000000000000000000000000${"11".repeat(20)}`,
+  versionTag = "e9a05a20",
+  log = () => {},
+}) {
   const at = {
     globalConfig: instanceAddress(INSTANCE_ID, owner),
     rmnRemote: instanceAddress(`${INSTANCE_ID}-rmn`, owner),
@@ -61,12 +69,28 @@ export async function bootstrap({ api, owner, chainSelector, versionTag = "e9a05
 
   const deployed = {};
 
+  // A source lane must exist before the OffRamp will accept a message from it. The committee
+  // verifier is lane-mandated, so every inbound message has to carry its verification.
+  const sourceChainConfigs = sourceChainSelector
+    ? [
+        [
+          sourceChainSelector,
+          {
+            isEnabled: true,
+            onRampAddresses: [sourceOnRamp],
+            laneMandatedCCVs: [at.committeeVerifier],
+            defaultCCVs: [],
+          },
+        ],
+      ]
+    : [];
+
   deployed.globalConfig = await deploy("DeployGlobalConfig", {
     instanceId: INSTANCE_ID,
     ccipOwner: owner,
     chainSelector,
     destChainConfigs: [],
-    sourceChainConfigs: [],
+    sourceChainConfigs,
   });
 
   deployed.rmnRemote = await deploy("DeployRMNRemote", {

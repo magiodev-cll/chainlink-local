@@ -35,6 +35,9 @@ That is a complete CCIP instance: global config, RMN remote, token admin registr
 committee verifier, executor, offRamp, onRamp, a router factory and a per-party router, plus a
 receiver contract. A cold run takes about 50 seconds and exits clean.
 
+The global config carries a source lane for Ethereum Sepolia with the committee verifier as a
+lane-mandated CCV, so the instance is ready to accept an inbound message.
+
 ## What is not built
 
 - **Message delivery.** `PerPartyRouter.Execute` needs an `ExecutingMessage` built by
@@ -55,7 +58,7 @@ These cost time to find and are not in the tutorials:
 | Readiness | The sandbox prints "ready" *before* it finishes ingesting DARs. Poll `/v2/packages` for the package id you need. |
 | Party allocation | `POST /v2/parties` with `{"partyIdHint": "alice"}`. No Daml tooling needed. |
 | Command submission | `submit-and-wait-for-transaction` wraps everything in a `commands` key and returns the created events, which is how you get new contract ids. |
-| Daml `Map` | Encodes as an array of `{key, value}` pairs, so an empty map is `[]`. |
+| Daml `Map` | Encodes as an array of two-element arrays, `[[key, value]]`. An empty map is `[]`. |
 | Daml `Set` | Is a newtype over `Map`, so an empty set is `{"map": []}`. |
 | Daml variants | `{"tag": "WaitForSafe", "value": {}}`. A nullary constructor still needs the `value` key. |
 | `RawInstanceAddress` | Newtype over `Text` but encodes as `{"unpack": "<instanceId>@<party>"}`. |

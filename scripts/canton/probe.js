@@ -9,6 +9,7 @@ import { dpmPath, ledger, startSandbox, variant } from "./sandbox.js";
 
 // `canton-localnet`, per chain-selectors. The local participant plays this chain.
 const CANTON_LOCALNET_SELECTOR = "8706591216959472610";
+const ETHEREUM_SEPOLIA_SELECTOR = "16015286601757825753";
 
 const log = (line) => console.log(`[canton] ${line}`);
 
@@ -41,6 +42,7 @@ async function main() {
       api,
       owner: alice,
       chainSelector: CANTON_LOCALNET_SELECTOR,
+      sourceChainSelector: ETHEREUM_SEPOLIA_SELECTOR,
       log,
     });
     log(`${Object.keys(deployed).length} CCIP contracts deployed`);
