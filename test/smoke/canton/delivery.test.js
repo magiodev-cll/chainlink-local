@@ -36,7 +36,12 @@ test(
         sourceChainSelector: ETHEREUM_SEPOLIA_SELECTOR,
         committeeSignerKeys: committeeKeys.map(publicKeyOf),
       });
-      assert.equal(Object.keys(deployed).length, 9);
+      for (const name of [
+        "globalConfig", "rmnRemote", "tokenAdminRegistry", "feeQuoter",
+        "committeeVerifier", "executor", "offRamp", "onRamp", "routerFactory", "linkRegistry",
+      ]) {
+        assert.ok(deployed[name], `${name} not deployed`);
+      }
 
       const receiver = await api.create(
         RECEIVER,
@@ -67,6 +72,23 @@ test(
       assert.match(result.messageId, /^0x[0-9a-f]{64}$/);
       // The receiver returns a CCIPMessageReceived contract the application can read.
       assert.ok(result.messageReceived);
+
+      // Same path, now carrying a token transfer through the registered pool.
+      const withToken = await deliver({
+        api,
+        owner: alice,
+        receiver,
+        router: result.router,
+        deployed,
+        addresses,
+        receiverParty: alice,
+        sourceChainSelector: ETHEREUM_SEPOLIA_SELECTOR,
+        committeeKeys,
+        token: { amount: 7n },
+        data: Buffer.from("tokens").toString("hex"),
+      });
+      assert.ok(withToken.messageReceived);
+      assert.notEqual(withToken.messageId, result.messageId);
     } finally {
       await sandbox.stop();
     }

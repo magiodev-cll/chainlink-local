@@ -10,6 +10,9 @@ export const PACKAGES = {
   api: "7fffaf108129d37413d8edfbd91ffe373051b2cb0621c26e245093c6138daf58",
   receiver: "95c3cdc53c172c7202f5b2711ad01d591c84e0aa00cbce4fd0d9ad8f75c11552",
   committeeVerifier: "0ad9d7694de68cd774fe399999722cf5fd8c514066125261e21b42431cfc962e",
+  core: "7a08ead9e5158d6e493c144c63a91b1a7e23b9424359c1551ccfad991ba39c39",
+  burnMintPool: "a4a07fc1d1d686f778821a78c795c8df6dc3896dd3f171d991bfa5f374f86662",
+  rateLimiter: "3c33043d19b1a5eb1b842d3c1634ab73c6886c3b1e0b36628053093dbe5739c3",
 };
 
 export const FACTORY = `${PACKAGES.factory}:CCIP.FactoryV2:CCIPFactory`;
@@ -18,9 +21,18 @@ export const ROUTER_TEMPLATE = `${PACKAGES.runtime}:CCIP.RuntimeV2.PerPartyRoute
 export const EXECUTING_MESSAGE_INTERFACE = `${PACKAGES.api}:CCIP.APIV2.ExecutingMessage:IExecutingMessage`;
 export const RECEIVER = `${PACKAGES.receiver}:CCIP.CCIPReceiver:CCIPReceiver`;
 export const COMMITTEE_VERIFIER = `${PACKAGES.committeeVerifier}:CCIP.CommitteeVerifierV2:CommitteeVerifier`;
+export const TOKEN_ADMIN_REGISTRY = `${PACKAGES.core}:CCIP.CoreV2.TokenAdminRegistry:TokenAdminRegistry`;
+export const TOKEN_CONFIG = "TokenConfig";
 
 /** A local instance id. Every CCIP contract in the instance is addressed as `<instanceId>@<party>`. */
 export const INSTANCE_ID = "chainlink-local";
+
+/** The LINK stand-in deployed by the factory, used as fee token and by the pools. */
+export const LINK_INSTANCE_ID = `${INSTANCE_ID}-link`;
+export const LINK_INSTRUMENT_ID = (owner) => ({ admin: owner, id: "LINK" });
+export const POOL_INSTANCE_ID = `${LINK_INSTANCE_ID}-bm-pool`;
+export const POOL_TEMPLATE = `${PACKAGES.burnMintPool}:CCIP.BurnMintTokenPoolV2:BurnMintTokenPool`;
+export const RATE_LIMITER_TEMPLATE = `${PACKAGES.rateLimiter}:CCIP.RateLimiterV2:RateLimiter`;
 
 /**
  * Deploys global config, RMN remote, token admin registry, fee quoter, committee verifier,
@@ -167,6 +179,93 @@ export async function bootstrap({
     });
   }
 
+  // The LINK stand-in is a full Splice instrument: holdings, transfer factory and burn/mint.
+  // It is the fee token for sends and the token the pools move.
+  deployed.linkRegistry = await deploy("DeployLinkToken", {
+    instanceId: LINK_INSTANCE_ID,
+    registryAdmin: owner,
+    registryInstrumentId: LINK_INSTRUMENT_ID(owner),
+    registryMeta: { values: {} },
+  });
+
+  // A burn/mint pool for the LINK instrument, then the registry handshake that makes it official.
+  deployed.tokenPool = await deploy("DeployBurnMintTokenPool", {
+    instanceId: POOL_INSTANCE_ID,
+    poolOwner: owner,
+    ccipOwner: owner,
+    instrumentId: LINK_INSTRUMENT_ID(owner),
+    decimals: 10,
+    rateLimitAdmin: null,
+    remoteChainConfigs: [],
+    tokenTransferFeeConfigs: [],
+    poolReceiveContext: { values: {} },
+    transferTimeout: variant("Indefinite"),
+    deps: {
+      tokenAdminRegistry: at.tokenAdminRegistry,
+      feeQuoter: at.feeQuoter,
+      rmnRemote: at.rmnRemote,
+    },
+  });
+
+  const registered = await registerPool({
+    api,
+    owner,
+    registry: deployed.tokenAdminRegistry,
+    instrumentId: LINK_INSTRUMENT_ID(owner),
+    log,
+  });
+  deployed.tokenAdminRegistry = registered.registry;
+  deployed.tokenConfig = registered.tokenConfig;
+
+  // The pool needs a remote chain entry before it will accept a transfer from that chain.
+  if (sourceChainSelector) {
+    // The pool rejects identical limiter addresses, so inbound, inbound-custom and outbound are separate.
+    const limiter = async (suffix, direction, mode) => {
+      const instanceId = `${POOL_INSTANCE_ID}-${suffix}`;
+      const cid = await deploy("DeployRateLimiter", {
+        instanceId,
+        poolInstanceId: POOL_INSTANCE_ID,
+        poolOwner: owner,
+        remoteChainSelector: sourceChainSelector,
+        // All-nullary enums are plain strings; only constructors with arguments use {tag, value}.
+        direction,
+        mode,
+        isEnabled: true,
+        capacity: "1000000000",
+        rate: "1000000000",
+        tokens: "1000000000",
+        lastUpdated: new Date().toISOString(),
+      });
+      return { cid, address: instanceAddress(instanceId, owner) };
+    };
+
+    const inboundLimiter = await limiter("inbound-limiter", "RateLimitDirection_Inbound", "RateLimitMode_DefaultFinality");
+    const inboundCustomLimiter = await limiter("inbound-custom-limiter", "RateLimitDirection_Inbound", "RateLimitMode_CustomFinality");
+    const outboundLimiter = await limiter("outbound-limiter", "RateLimitDirection_Outbound", "RateLimitMode_DefaultFinality");
+    deployed.inboundRateLimiter = inboundLimiter.cid;
+
+    const added = await api.exercise(POOL_TEMPLATE, deployed.tokenPool, "ApplyChainUpdates", {
+      remoteChainSelectorsToRemove: [],
+      chainsToAdd: [
+        {
+          remoteChainSelector: sourceChainSelector,
+          remotePools: ["66".repeat(32)],
+          remoteTokenAddress: "55".repeat(32),
+          inboundCCVs: [at.committeeVerifier],
+          outboundCCVs: [],
+          finalityConfig: variant("WaitForFinality"),
+          inboundRateLimiter: inboundLimiter.address,
+          inboundCustomBlockConfirmationsRateLimiter: inboundCustomLimiter.address,
+          outboundRateLimiter: outboundLimiter.address,
+        },
+      ],
+    }, owner);
+    const next = added.find((e) => e.templateId.endsWith(":BurnMintTokenPool") && e.acsDelta);
+    if (!next) throw new Error("ApplyChainUpdates produced no pool");
+    deployed.tokenPool = next.contractId;
+    log("pool opened for the source lane");
+  }
+
   deployed.offRamp = await deploy("DeployOffRamp", {
     instanceId: `${INSTANCE_ID}-offramp`,
     ccipOwner: owner,
@@ -253,4 +352,41 @@ async function configureVerifier({ api, owner, verifier, sourceChainSelector, si
 
   log(`verifier configured: ${signerKeys.length} signer(s), threshold ${threshold}`);
   return afterSigners;
+}
+
+/** Propose, accept and set the pool. One party owns everything locally, so no disclosure is needed. */
+async function registerPool({ api, owner, registry, instrumentId, log }) {
+  const newest = (events) => {
+    const config = events.find((e) => e.templateId.endsWith(":TokenConfig") && e.acsDelta);
+    if (!config) throw new Error("registry choice produced no TokenConfig");
+    return config.contractId;
+  };
+
+  const proposed = await api.exercise(TOKEN_ADMIN_REGISTRY, registry, "ProposeAdministrator", {
+    tokenConfigCid: null,
+    instrumentId,
+    newAdmin: owner,
+    context: { values: {} },
+    caller: owner,
+  }, owner);
+
+  const accepted = await api.exercise(TOKEN_ADMIN_REGISTRY, registry, "AcceptAdminRole", {
+    tokenConfigCid: newest(proposed),
+    instrumentId,
+    context: { values: {} },
+    caller: owner,
+  }, owner);
+
+  const config = newest(
+    await api.exercise(TOKEN_ADMIN_REGISTRY, registry, "SetPool", {
+      tokenConfigCid: newest(accepted),
+      instrumentId,
+      tokenPool: { poolOwner: owner, poolInstanceId: POOL_INSTANCE_ID },
+      context: { values: {} },
+      caller: owner,
+    }, owner),
+  );
+
+  log("token pool registered for LINK");
+  return { registry, tokenConfig: config };
 }

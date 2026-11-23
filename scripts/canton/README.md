@@ -40,8 +40,9 @@ Daml encoder in the released DAR.
 
 ## What is not built
 
-- **Token transfers.** The pool templates ship and the factory can deploy them, but no pool is
-  registered in the token admin registry and the inbound pool verification step is not wired.
+- ~~Token transfers~~ Done inbound: a burn/mint pool is deployed, registered through the admin
+  handshake, opened for the source lane, and the receiver runs `TokenPool_VerifyInboundMessage`
+  before the CCVs. Outbound token transfers still need the fee holding and `CCIPSend`.
 - ~~Real committee signatures~~ Done: `committee.js` signs `keccak256(versionTag || messageId)` and
   the on-chain `CommitteeVerifier` checks ECDSA against configured signer keys.
 - **The EVM half.** A `routeToCanton()` alongside the existing `routeToSvm()`.
