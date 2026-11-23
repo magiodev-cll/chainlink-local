@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { listDars, resolveArtifacts } from "../../../scripts/canton/artifacts.js";
 import { bootstrap, PACKAGES, RECEIVER } from "../../../scripts/canton/bootstrap.js";
+import { committeeKey, publicKeyOf } from "../../../scripts/canton/committee.js";
 import { deliver } from "../../../scripts/canton/deliver.js";
 import { ledger, startSandbox, variant } from "../../../scripts/canton/sandbox.js";
 
@@ -27,15 +28,17 @@ test(
       await waitForPackage(api, PACKAGES.factory);
 
       const alice = await api.allocateParty("alice");
+      const committeeKeys = [committeeKey(0)];
       const { addresses, deployed, router } = await bootstrap({
         api,
         owner: alice,
         chainSelector: CANTON_LOCALNET_SELECTOR,
         sourceChainSelector: ETHEREUM_SEPOLIA_SELECTOR,
+        committeeSignerKeys: committeeKeys.map(publicKeyOf),
       });
       assert.equal(Object.keys(deployed).length, 9);
 
-      await api.create(
+      const receiver = await api.create(
         RECEIVER,
         {
           instanceId: "chainlink-local-receiver",
@@ -51,18 +54,19 @@ test(
       const result = await deliver({
         api,
         owner: alice,
+        receiver,
         router,
         deployed,
         addresses,
         receiverParty: alice,
         sourceChainSelector: ETHEREUM_SEPOLIA_SELECTOR,
+        committeeKeys,
         data: Buffer.from(PAYLOAD).toString("hex"),
       });
 
       assert.match(result.messageId, /^0x[0-9a-f]{64}$/);
-      // Execute consumes the router and creates a new one, so a different id proves it ran.
-      assert.ok(result.router);
-      assert.notEqual(result.router, router);
+      // The receiver returns a CCIPMessageReceived contract the application can read.
+      assert.ok(result.messageReceived);
     } finally {
       await sandbox.stop();
     }

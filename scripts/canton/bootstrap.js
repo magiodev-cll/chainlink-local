@@ -9,6 +9,7 @@ export const PACKAGES = {
   runtime: "00ce3527b21ca012761fa58fae105954103a62bc4d72a2018d001b32b79a11a9",
   api: "7fffaf108129d37413d8edfbd91ffe373051b2cb0621c26e245093c6138daf58",
   receiver: "95c3cdc53c172c7202f5b2711ad01d591c84e0aa00cbce4fd0d9ad8f75c11552",
+  committeeVerifier: "0ad9d7694de68cd774fe399999722cf5fd8c514066125261e21b42431cfc962e",
 };
 
 export const FACTORY = `${PACKAGES.factory}:CCIP.FactoryV2:CCIPFactory`;
@@ -16,6 +17,7 @@ export const ROUTER_FACTORY = `${PACKAGES.runtime}:CCIP.RuntimeV2.PerPartyRouter
 export const ROUTER_TEMPLATE = `${PACKAGES.runtime}:CCIP.RuntimeV2.PerPartyRouter:PerPartyRouter`;
 export const EXECUTING_MESSAGE_INTERFACE = `${PACKAGES.api}:CCIP.APIV2.ExecutingMessage:IExecutingMessage`;
 export const RECEIVER = `${PACKAGES.receiver}:CCIP.CCIPReceiver:CCIPReceiver`;
+export const COMMITTEE_VERIFIER = `${PACKAGES.committeeVerifier}:CCIP.CommitteeVerifierV2:CommitteeVerifier`;
 
 /** A local instance id. Every CCIP contract in the instance is addressed as `<instanceId>@<party>`. */
 export const INSTANCE_ID = "chainlink-local";
@@ -31,6 +33,8 @@ export async function bootstrap({
   sourceChainSelector,
   sourceOnRamp = `000000000000000000000000${"11".repeat(20)}`,
   versionTag = "e9a05a20",
+  committeeSignerKeys = [],
+  committeeThreshold = 1,
   log = () => {},
 }) {
   const at = {
@@ -150,6 +154,19 @@ export async function bootstrap({
     remoteChainConfigs: [],
   });
 
+  // The verifier only accepts messages from chains it has a signature config for.
+  if (sourceChainSelector && committeeSignerKeys.length > 0) {
+    deployed.committeeVerifier = await configureVerifier({
+      api,
+      owner,
+      verifier: deployed.committeeVerifier,
+      sourceChainSelector,
+      signerKeys: committeeSignerKeys,
+      threshold: committeeThreshold,
+      log,
+    });
+  }
+
   deployed.offRamp = await deploy("DeployOffRamp", {
     instanceId: `${INSTANCE_ID}-offramp`,
     ccipOwner: owner,
@@ -201,6 +218,39 @@ export async function bootstrap({
 
   at.chainSelector = chainSelector;
   at.routerTemplate = ROUTER_TEMPLATE;
+  at.receiverTemplate = RECEIVER;
 
   return { factory, router: router.contractId, addresses: at, deployed };
+}
+
+async function configureVerifier({ api, owner, verifier, sourceChainSelector, signerKeys, threshold, log }) {
+  const replaced = (events) => {
+    const next = events.find((e) => e.templateId.endsWith(":CommitteeVerifier"));
+    if (!next) throw new Error("verifier choice produced no CommitteeVerifier");
+    return next.contractId;
+  };
+
+  const afterChain = replaced(
+    await api.exercise(COMMITTEE_VERIFIER, verifier, "ApplyRemoteChainConfigUpdates", {
+      remoteChainConfigArgs: [
+        {
+          remoteChainSelector: sourceChainSelector,
+          feeUSDCents: "0",
+          gasForVerification: 100_000,
+          payloadSizeBytes: 10_000,
+          allowListEnabled: false,
+        },
+      ],
+    }, owner),
+  );
+
+  const afterSigners = replaced(
+    await api.exercise(COMMITTEE_VERIFIER, afterChain, "ApplySignatureConfigs", {
+      sourceChainSelectorsToRemove: [],
+      signatureConfigs: [{ sourceChainSelector, threshold, signerKeys }],
+    }, owner),
+  );
+
+  log(`verifier configured: ${signerKeys.length} signer(s), threshold ${threshold}`);
+  return afterSigners;
 }
