@@ -45,7 +45,9 @@ Daml encoder in the released DAR.
   before the CCVs. Outbound token transfers still need the fee holding and `CCIPSend`.
 - ~~Real committee signatures~~ Done: `committee.js` signs `keccak256(versionTag || messageId)` and
   the on-chain `CommitteeVerifier` checks ECDSA against configured signer keys.
-- **The EVM half.** A `routeToCanton()` alongside the existing `routeToSvm()`.
+- ~~Canton to EVM~~ Done: `lane.js` configures the destination lane and `send.js` prepares, prices,
+  finalises, attaches verifier data and sends. Handing the message to an EVM node still needs
+  `routeToCanton()` alongside `routeToSvm()` in the router stack.
 
 ## Toolchain facts
 
@@ -85,4 +87,6 @@ are why `bootstrap.js` looks verbose.
 - `bootstrap.js` deploys the CCIP instance and creates the router.
 - `committee.js` holds local signer keys and builds the verifierResults blob.
 - `deliver.js` builds a message and calls `CCIPReceiver.Execute`, which runs the whole inbound path.
+- `lane.js` configures the outbound destination lane, its fee config and the LINK price.
+- `send.js` mints a fee holding and walks prepare, price, finalise, verifier and send.
 

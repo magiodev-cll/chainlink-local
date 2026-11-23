@@ -13,6 +13,7 @@ export const PACKAGES = {
   core: "7a08ead9e5158d6e493c144c63a91b1a7e23b9424359c1551ccfad991ba39c39",
   burnMintPool: "a4a07fc1d1d686f778821a78c795c8df6dc3896dd3f171d991bfa5f374f86662",
   rateLimiter: "3c33043d19b1a5eb1b842d3c1634ab73c6886c3b1e0b36628053093dbe5739c3",
+  burnMint: "9cc2cbc838ef38dc2c7f34014c9c452bcf71b8e2a4f939235fc0b5d0924b185e",
 };
 
 export const FACTORY = `${PACKAGES.factory}:CCIP.FactoryV2:CCIPFactory`;
