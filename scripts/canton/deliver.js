@@ -51,7 +51,7 @@ export async function deliver(opts) {
         // CCIP amounts are base units; the Daml side uses whole tokens with 10 decimals.
         amount: word32(token.amount),
         sourcePoolAddress: token.sourcePoolAddress ?? hexToBytes("66".repeat(32)),
-        sourceTokenAddress: token.sourceTokenAddress ?? hexToBytes("55".repeat(32)),
+        sourceTokenAddress: token.sourceTokenAddress ?? hexToBytes(`${"00".repeat(12)}${"55".repeat(20)}`),
         // The pool matches this against keccak256(utf8("<id>@<admin>")) of its instrument.
         destTokenAddress: token.destTokenAddress ?? hashAddress(`LINK@${owner}`),
         tokenReceiver: hashAddress(token.tokenReceiverParty ?? receiverParty),

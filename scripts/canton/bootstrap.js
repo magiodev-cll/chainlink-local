@@ -245,6 +245,7 @@ export async function bootstrap({
     const inboundCustomLimiter = await limiter("inbound-custom-limiter", "RateLimitDirection_Inbound", "RateLimitMode_CustomFinality");
     const outboundLimiter = await limiter("outbound-limiter", "RateLimitDirection_Outbound", "RateLimitMode_DefaultFinality");
     deployed.inboundRateLimiter = inboundLimiter.cid;
+    deployed.outboundRateLimiter = outboundLimiter.cid;
 
     const added = await api.exercise(POOL_TEMPLATE, deployed.tokenPool, "ApplyChainUpdates", {
       remoteChainSelectorsToRemove: [],
@@ -252,7 +253,8 @@ export async function bootstrap({
         {
           remoteChainSelector: sourceChainSelector,
           remotePools: ["66".repeat(32)],
-          remoteTokenAddress: "55".repeat(32),
+          // EVM addresses are 20 bytes, left-padded to the 32-byte word the codec carries.
+          remoteTokenAddress: `${"00".repeat(12)}${"55".repeat(20)}`,
           inboundCCVs: [at.committeeVerifier],
           outboundCCVs: [],
           finalityConfig: variant("WaitForFinality"),

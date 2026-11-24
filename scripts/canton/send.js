@@ -1,6 +1,7 @@
 // Sends a CCIP message from Canton: mint a fee holding, prepare and price the message, then send.
 
-import { PACKAGES } from "./bootstrap.js";
+import { PACKAGES, POOL_INSTANCE_ID, POOL_TEMPLATE } from "./bootstrap.js";
+import { bytesToHex } from "./codec.js";
 
 export async function send({
   api,
@@ -13,26 +14,16 @@ export async function send({
   payload = "",
   gasLimit = 200_000,
   feeAmount = "10000.0",
+  token,
   log = () => {},
 }) {
   const instrumentId = { admin: owner, id: "LINK" };
 
-  const minted = await api.exercise(
-    BURN_MINT_FACTORY,
-    deployed.linkRegistry,
-    "BurnMintFactory_BurnMint",
-    {
-      expectedAdmin: owner,
-      instrumentId,
-      inputHoldingCids: [],
-      outputs: [{ owner, amount: feeAmount, context: { values: {} } }],
-      extraActors: [],
-      extraArgs: { context: { values: {} }, meta: { values: {} } },
-    },
-    owner,
-  );
-  const holding = minted.find((e) => e.templateId.endsWith(":LinkHolding") && e.acsDelta);
-  if (!holding) throw new Error("burn/mint produced no LinkHolding");
+  const holding = await mintHolding(api, owner, deployed, feeAmount, "fee");
+
+  const transferHolding = token
+    ? await mintHolding(api, owner, deployed, token.amount, "transfer")
+    : undefined;
 
   const context = {
     values: {
@@ -54,7 +45,7 @@ export async function send({
       message: {
         receiver,
         payload,
-        tokenTransfer: null,
+        tokenTransfer: token ? { token: instrumentId, amount: token.amount } : null,
         feeToken: instrumentId,
         extraArgs: {
           tag: "V3",
@@ -72,6 +63,44 @@ export async function send({
     owner,
   );
   let current = sendingMessageOf(prepared);
+
+  // The pool resolves its outbound CCVs, then quotes its fee, both while the message is open.
+  if (token) {
+    current = sendingMessageOf(
+      await api.exercise(
+        POOL_TEMPLATE,
+        deployed.tokenPool,
+        "VerifyOutboundCCVs",
+        {
+          tokenAdminRegistryCid: deployed.tokenAdminRegistry,
+          tokenConfigCid: deployed.tokenConfig,
+          sendingMessageCid: current.contractId,
+          amount: token.amount,
+          context,
+          caller: owner,
+        },
+        owner,
+      ),
+    );
+
+    current = sendingMessageOf(
+      await api.exercise(
+        POOL_TEMPLATE,
+        deployed.tokenPool,
+        "CalculateFee",
+        {
+          tokenAdminRegistryCid: deployed.tokenAdminRegistry,
+          tokenConfigCid: deployed.tokenConfig,
+          sendingMessageCid: current.contractId,
+          feeQuoterCid: deployed.feeQuoter,
+          tokenInstrumentId: instrumentId,
+          context,
+          caller: owner,
+        },
+        owner,
+      ),
+    );
+  }
 
   // Fee is priced while the message is still Prepared, one call per mandated CCV.
   const pricedByCcv = await api.exercise(
@@ -91,6 +120,33 @@ export async function send({
     owner,
   );
   current = sendingMessageOf(finalized);
+
+  // A token transfer is locked or burned only once the fee is finalised.
+  if (token) {
+    const locked = await api.exercise(
+      POOL_TEMPLATE,
+      deployed.tokenPool,
+      "LockOrBurn",
+      {
+        tokenAdminRegistryCid: deployed.tokenAdminRegistry,
+        tokenConfigCid: deployed.tokenConfig,
+        rmnRemoteCid: deployed.rmnRemote,
+        sendingMessageCid: current.contractId,
+        senderInputCids: [transferHolding.contractId],
+        amount: token.amount,
+        context: {
+          values: {
+            "burn-mint-factory": av(deployed.linkRegistry),
+            "rate-limiter": av(deployed.outboundRateLimiter),
+          },
+        },
+        caller: owner,
+      },
+      owner,
+    );
+    const lockedMessage = locked.find((e) => e.templateId.endsWith(":SendingMessage") && e.acsDelta);
+    if (lockedMessage) current = lockedMessage;
+  }
 
   // Verifier data can only be attached after finalisation.
   const forwarded = await api.exercise(
@@ -154,3 +210,36 @@ function sendingMessageOf(events) {
 }
 
 const av = (contractId) => ({ tag: "AV_ContractId", value: contractId });
+export const SENDING_MESSAGE = `${PACKAGES.core}:CCIP.CoreV2.SendingMessage:SendingMessage`;
+
+/** Daml amounts are decimals; CCIP payloads use base units at 10 decimals. */
+function decimalsToBaseUnits(amount) {
+  const [whole, fraction = ""] = String(amount).split(".");
+  return BigInt(whole + fraction.padEnd(10, "0").slice(0, 10));
+}
+
+function word32(value) {
+  const hex = BigInt(value).toString(16);
+  if (hex.length > 64) throw new Error(`amount does not fit 32 bytes: ${value}`);
+  return Buffer.from(hex.padStart(64, "0"), "hex");
+}
+
+async function mintHolding(api, owner, deployed, amount, label) {
+  const minted = await api.exercise(
+    BURN_MINT_FACTORY,
+    deployed.linkRegistry,
+    "BurnMintFactory_BurnMint",
+    {
+      expectedAdmin: owner,
+      instrumentId: { admin: owner, id: "LINK" },
+      inputHoldingCids: [],
+      outputs: [{ owner, amount, context: { values: {} } }],
+      extraActors: [],
+      extraArgs: { context: { values: {} }, meta: { values: {} } },
+    },
+    owner,
+  );
+  const holding = minted.find((e) => e.templateId.endsWith(":LinkHolding") && e.acsDelta);
+  if (!holding) throw new Error(`burn/mint produced no ${label} holding`);
+  return holding;
+}

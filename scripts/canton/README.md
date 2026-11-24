@@ -19,6 +19,9 @@ const withTokens = await canton.deliver({ token: { amount: 7n * 10n ** 10n } });
 // Outbound: opens the destination lane on first use, returns the encoded CCIP message.
 const sent = await canton.send({ receiver: `0x${"00".repeat(12)}${"44".repeat(20)}`, payload: "68656c6c6f" });
 
+// Outbound with tokens: the pool burns the sender's holding before the send.
+const sentTokens = await canton.send({ receiver: `0x${"00".repeat(12)}${"44".repeat(20)}`, token: { amount: "7.0" } });
+
 // Outbound plus the struct the EVM router takes.
 const { evmMessage } = await canton.routeToCanton({ payload: "68656c6c6f" });
 
@@ -44,8 +47,6 @@ there is no key to sign an inbound fork message with.
 
 ## What is not done
 
-- Outbound token transfers. `send()` passes `tokenTransfer: null`; the inbound direction does move
-  tokens.
 - Handing a message to a live EVM node. `routeToCanton()` produces the struct; the call itself is
   the caller's.
 

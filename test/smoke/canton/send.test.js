@@ -28,6 +28,20 @@ test("opens the destination lane and sends a message", { timeout: 300_000 }, asy
       sent.encodedMessage.includes(Buffer.from("hello evm").toString("hex")),
       "payload is carried",
     );
+
+    // Same lane, now carrying a token transfer through the pool.
+    const withToken = await canton.send({
+      receiver: `${"00".repeat(12)}${"44".repeat(20)}`,
+      payload: Buffer.from("tokens").toString("hex"),
+      token: { amount: "7.0" },
+    });
+
+    assert.match(withToken.encodedMessage, /^01/);
+    assert.ok(
+      withToken.encodedMessage.includes("55".repeat(20)),
+      "the token transfer section carries the destination token address",
+    );
+    assert.notEqual(withToken.messageId, sent.messageId);
   } finally {
     await canton.stop();
   }
