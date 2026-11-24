@@ -1,20 +1,15 @@
-// EXPERIMENTAL: a party that does not own the CCIP contracts delivers and sends using disclosed contracts.
-// This is the shape a real network needs; here both parties live on one sandbox.
+// EXPERIMENTAL: a party that does not own the CCIP contracts creates its own router and delivers,
+// using disclosed contracts. This mirrors a testnet app party, where nobody bootstraps for you.
 
 import assert from "node:assert/strict";
 import test from "node:test";
 import { listDars, resolveArtifacts } from "../../../scripts/canton/artifacts.js";
-import {
-  bootstrap,
-  PACKAGES,
-  RECEIVER,
-  ROUTER_FACTORY,
-} from "../../../scripts/canton/bootstrap.js";
+import { bootstrap, PACKAGES, RECEIVER } from "../../../scripts/canton/bootstrap.js";
 import { committeeKey, publicKeyOf } from "../../../scripts/canton/committee.js";
 import { connectCanton, exportInstance } from "../../../scripts/canton/connect.js";
 import { ledger, startSandbox, variant } from "../../../scripts/canton/sandbox.js";
 
-test("an app party delivers with disclosed contracts", { timeout: 300_000 }, async () => {
+test("an app party creates a router and delivers with disclosed contracts", { timeout: 300_000 }, async () => {
   const box = await startSandbox({ dars: listDars(resolveArtifacts()) });
   try {
     const api = ledger(box.url);
@@ -32,19 +27,7 @@ test("an app party delivers with disclosed contracts", { timeout: 300_000 }, asy
       committeeSignerKeys: committeeKeys.map(publicKeyOf),
     });
 
-    // The app party needs the router factory disclosed to create its own router.
-    const factoryDisclosure = await discloseOne(api, owner, instance.deployed.routerFactory);
-    const created = await api.exercise(
-      ROUTER_FACTORY,
-      instance.deployed.routerFactory,
-      "CreateRouter",
-      { partyOwner: app, instanceId: "app-router", feeTransferLifetime: null },
-      app,
-      { disclosedContracts: [factoryDisclosure] },
-    );
-    const router = created.find((e) => e.templateId.endsWith(":PerPartyRouter") && e.acsDelta);
-    assert.ok(router, "no router for the app party");
-
+    // The app owns its receiver already; the router is created after connecting.
     const receiver = await api.create(
       RECEIVER,
       {
@@ -58,19 +41,28 @@ test("an app party delivers with disclosed contracts", { timeout: 300_000 }, asy
       app,
     );
 
-    // The deployer exports what the app party cannot see.
     const bundle = await exportInstance({
       api,
       party: owner,
       deployed: instance.deployed,
       addresses: instance.addresses,
-      router: router.contractId,
       receiver,
     });
     assert.ok(bundle.disclosures.length >= 10, "expected disclosures for the context contracts");
-    assert.ok(bundle.disclosures.every((d) => d.createdEventBlob && d.synchronizerId));
+    assert.ok(bundle.factoryDisclosure, "expected a router factory disclosure");
+    assert.equal(bundle.router, undefined, "no router exists for the app party yet");
 
     const connected = await connectCanton({ url: box.url, party: app, bundle });
+
+    await assert.rejects(
+      () => connected.deliver({ committeeKeys, data: "00" }),
+      /call createRouter\(\) first/,
+    );
+
+    const router = await connected.createRouter({ instanceId: "app-router" });
+    assert.ok(router);
+    assert.equal(connected.router, router);
+
     const result = await connected.deliver({
       sourceChainSelector: "16015286601757825753",
       committeeKeys,
@@ -83,21 +75,6 @@ test("an app party delivers with disclosed contracts", { timeout: 300_000 }, asy
     await box.stop();
   }
 });
-
-async function discloseOne(api, party, contractId) {
-  const visible = await api.activeContractsWildcard(party);
-  const created = visible.find((c) => c.contractId === contractId);
-  if (!created) {
-    const candidates = visible.filter((c) => c.templateId.includes("PerPartyRouter")).map((c) => c.contractId);
-    throw new Error(`${contractId} not visible to ${party}; candidates ${candidates.join(",")}`);
-  }
-  return {
-    templateId: created.templateId,
-    contractId: created.contractId,
-    createdEventBlob: created.createdEventBlob,
-    synchronizerId: await api.synchronizerId(),
-  };
-}
 
 async function waitForPackage(api, packageId, timeoutMs = 120_000) {
   const deadline = Date.now() + timeoutMs;
