@@ -1,92 +1,105 @@
-# Canton spike
+# Canton adapter
 
-An experiment, not a product. It answers two questions: can `chainlink-local` run the real CCIP
-Daml contracts on a local Canton participant, and can it deploy a complete trust layer there?
+Runs the real CCIP 2.0 Daml contracts on a local Canton participant, so an app can be tested against
+a real `OffRamp` instead of a mock.
 
-Yes to both. There is no `deliver()` yet.
+## Quick start
 
-## What works
+```js
+import { startCantonLocal } from "@chainlink/local/canton";
 
-Verified on macOS arm64, Canton 3.4.11:
+const canton = await startCantonLocal();
 
-```
-$ node --test test/smoke/canton/delivery.test.js
-[canton] 45 CCIP DARs from the pinned release
-[canton] packages on ledger: 82, including CCIP.FactoryV2
-[canton] DeployGlobalConfig: ok
-[canton] DeployRMNRemote: ok
-[canton] DeployTokenAdminRegistry: ok
-[canton] DeployFeeQuoter: ok
-[canton] DeployCommitteeVerifier: ok
-[canton] DeployExecutor: ok
-[canton] DeployOffRamp: ok
-[canton] DeployOnRamp: ok
-[canton] DeployPerPartyRouterFactory: ok
-[canton] CreateRouter: ok
-[canton] 9 CCIP contracts deployed
-[canton] CCIPReceiver: 0005b3b1...
-[canton] message id 0xb38f804fc7c56d93ef1a4a96e739347515cfe96c8f0712e347d20e6134bc8e9b
-[canton] delivered: 0xb38f804f...
+// Inbound: a message from another chain, through the real OffRamp and the local committee.
+const result = await canton.deliver({ data: "68656c6c6f" });
 
-PASS: CCIP message executed on a local Canton participant.
+// Inbound with tokens: the pool releases a ticket and a holding is created.
+const withTokens = await canton.deliver({ token: { amount: 7n * 10n ** 10n } });
+
+// Outbound: opens the destination lane on first use, returns the encoded CCIP message.
+const sent = await canton.send({ receiver: `0x${"00".repeat(12)}${"44".repeat(20)}`, payload: "68656c6c6f" });
+
+// Outbound plus the struct the EVM router takes.
+const { evmMessage } = await canton.routeToCanton({ payload: "68656c6c6f" });
+
+await canton.stop();
 ```
 
-So the smoke test deploys a complete CCIP instance, creates a per-party router and a receiver, then
-delivers a message through the real `OffRamp`: `PrepareExecute`, a CCV verification, `Execute`.
-A cold run takes about 60 seconds and exits clean.
+Each `deliver` and `send` returns the next router id internally, because both choices consume it.
 
-`node --test test/unit/canton/codec.test.js` checks the message encoder byte for byte against the
-Daml encoder in the released DAR.
+## What is real
 
-## What is not built
+- The participant, the ledger, and the CCIP contracts: 45 prebuilt DARs from the pinned upstream
+  release, deployed through the upstream `CCIPFactory`.
+- The message encoding, checked byte for byte against `CCIP.CodecV2.MessageCodecV1`.
+- Committee signatures: the verifier checks real ECDSA over `keccak256(versionTag || messageId)`.
+- The token: LINK as a Splice instrument with holdings, a burn/mint pool, three rate limiters, and
+  the registry handshake.
 
-- ~~Token transfers~~ Done inbound: a burn/mint pool is deployed, registered through the admin
-  handshake, opened for the source lane, and the receiver runs `TokenPool_VerifyInboundMessage`
-  before the CCVs. Outbound token transfers still need the fee holding and `CCIPSend`.
-- ~~Real committee signatures~~ Done: `committee.js` signs `keccak256(versionTag || messageId)` and
-  the on-chain `CommitteeVerifier` checks ECDSA against configured signer keys.
-- ~~Canton to EVM~~ Done: `lane.js` configures the destination lane and `send.js` prepares, prices,
-  finalises, attaches verifier data and sends. Handing the message to an EVM node still needs
-  `routeToCanton()` alongside `routeToSvm()` in the router stack.
+## What is simulated
 
-## Toolchain facts
+The offchain trust layer. A local party owns the instance, lanes use made-up addresses, and the
+committee keys are local. No fork mode: a real `OffRamp` only accepts Chainlink's own committee, so
+there is no key to sign an inbound fork message with.
 
-These cost time to find and are not in the tutorials:
+## What is not done
+
+- Outbound token transfers. `send()` passes `tokenTransfer: null`; the inbound direction does move
+  tokens.
+- Handing a message to a live EVM node. `routeToCanton()` produces the struct; the call itself is
+  the caller's.
+
+## Requirements
+
+Node 22, JDK 17 and the Daml SDK, because the sandbox is the SDK's daemon:
+
+```bash
+brew install openjdk@17
+export JAVA_HOME=/opt/homebrew/opt/openjdk@17
+dpm install 3.4.11
+```
+
+The first run downloads the release (51 MB) into `~/.cache/chainlink-local/canton`.
+
+## Tests
+
+```bash
+npm run test:canton
+```
+
+Unit tests are seconds; the two smoke tests each boot a sandbox and take about a minute.
+
+## Notes from the wire
 
 | Thing | Reality |
 |---|---|
-| `dpm sandbox` | Only exists in the SDK binary, not in the bare `dpm` package manager. Run `dpm install 3.4.11` first. |
-| `dpm sandbox --bootstrap` | Rejected: "bootstrap script cannot be defined together with the 'sandbox' command". Use repeated `--dar` for packages. |
-| Ports | JSON API 6864, Ledger API gRPC 6865, admin 6866. `--canton-port-file <file>` writes them once ready. |
-| Readiness | The sandbox prints "ready" *before* it finishes ingesting DARs. Poll `/v2/packages` for the package id you need. |
-| Party allocation | `POST /v2/parties` with `{"partyIdHint": "alice"}`. No Daml tooling needed. |
-| Command submission | `submit-and-wait-for-transaction` wraps everything in a `commands` key and returns the created events, which is how you get new contract ids. |
-| Daml `Map` | Encodes as an array of two-element arrays, `[[key, value]]`. An empty map is `[]`. |
-| Daml `Set` | Is a newtype over `Map`, so an empty set is `{"map": []}`. |
-| Daml variants | `{"tag": "WaitForSafe", "value": {}}`. A nullary constructor still needs the `value` key. |
-| `RawInstanceAddress` | Newtype over `Text` but encodes as `{"unpack": "<instanceId>@<party>"}`. |
-| Template ids | `<packageId>:<Module>:<Entity>`, for example `...:CCIP.CoreV2.GlobalConfig:GlobalConfig`. |
-| `AddCCVVerification` | Returns a new `ExecutingMessage` and archives the one passed in. Using the old contract id afterwards fails with `CONTRACT_NOT_FOUND`. |
-| At least one CCV | The OffRamp refuses a message with no required CCV, so the lane must mandate one and the message must carry its verification. |
-| `dpm` shutdown | `dpm` execs a JVM, so killing the launcher leaves Canton running. Spawn detached and signal the process group. |
+| `dpm sandbox` | Only in the SDK binary, not the bare `dpm`. `dpm install 3.4.11` first. |
+| `--bootstrap` | Rejected with `sandbox`; use repeated `--dar`. |
+| Readiness | Ready is printed before DAR ingestion finishes; poll `/v2/packages`. |
+| Daml `Map` | Array of `[key, value]` pairs. Empty is `[]`. |
+| Daml `Set` | `{"map": []}`. |
+| All-nullary enums | Plain strings. Only constructors with arguments use `{tag, value}`. |
+| `RawInstanceAddress` | `{"unpack": "<id>@<party>"}`. |
+| `AddCCVVerification` | Returns a new `ExecutingMessage` and archives the input. |
+| `Execute` / `CCIPSend` | Both consume the router; the returned id is the next one. |
+| Token amounts | CCIP uses base units; the Daml side uses whole tokens at 10 decimals. |
+| Ordering in a send | `CalculateFee` only while `Prepared`; `ForwardToVerifier` only after `FinalizeFee`. |
 
-## Why the factory matters
+## Why plain JavaScript
 
-`CCIPFactory` is the upstream bootstrap API: one contract with a choice per CCIP component, and
-each choice consumes the factory and returns a new one. That means the harness never hardcodes
-contract construction, it just drives the same choices a production deployment drives.
-
-The one catch: each choice takes the **fully built contract**, not a params record, so the harness
-has to construct the same record the factory's own `mk*Contract` helpers would. Those field lists
-are why `bootstrap.js` looks verbose.
+The SVM adapter is TypeScript with a build step. This one is `.js` and runs directly on Node 22,
+the same way `scripts/CCIPLocalSimulatorFork.js` does. The trade-off is that it ships no type
+declarations; porting to TypeScript is a mechanical change if the package standardises on it.
 
 ## Files
 
-- `artifacts.js` pins the release, verifies sha256, unpacks to `~/.cache/chainlink-local/canton`.
-- `sandbox.js` starts and stops the daemon, wraps the JSON API, and encodes the small Daml types.
-- `bootstrap.js` deploys the CCIP instance and creates the router.
-- `committee.js` holds local signer keys and builds the verifierResults blob.
-- `deliver.js` builds a message and calls `CCIPReceiver.Execute`, which runs the whole inbound path.
-- `lane.js` configures the outbound destination lane, its fee config and the LINK price.
-- `send.js` mints a fee holding and walks prepare, price, finalise, verifier and send.
-
+- `index.js` public entry, `startCantonLocal`
+- `artifacts.js` pinned release, sha256, cache
+- `sandbox.js` daemon lifecycle and the JSON Ledger API client
+- `bootstrap.js` deploy the CCIP instance through `CCIPFactory`
+- `codec.js` message and token transfer encoding
+- `committee.js` local signer keys and the verifier results blob
+- `deliver.js` inbound, one `CCIPReceiver.Execute` call
+- `lane.js` outbound destination lane, fee config and prices
+- `send.js` mint the fee holding and walk `PrepareSend` to `CCIPSend`
+- `evm.js` convert a sent message to the EVM router struct

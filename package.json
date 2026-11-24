@@ -10,7 +10,8 @@
     "scripts/CCIPLocalSimulatorFork.js",
     "scripts/CCIPLocalSimulatorFork.d.ts",
     "scripts/data-streams/**/*.js",
-    "remappings.txt"
+    "remappings.txt",
+    "scripts/canton/**"
   ],
   "engines": {
     "node": ">=22"
@@ -37,7 +38,8 @@
     "generate-docs": "npm run generate-solidity && npm run generate-jsdoc && npm run generate-index && npm run prettier",
     "update-register": "node helper_doc/updateRegisterContract.cjs",
     "prepack": "cp remappings.txt .remappings.txt.dev-backup && cp remappings-npm.txt remappings.txt",
-    "postpack": "mv .remappings.txt.dev-backup remappings.txt"
+    "postpack": "mv .remappings.txt.dev-backup remappings.txt",
+    "test:canton": "node --test test/unit/canton/*.test.js test/smoke/canton/*.test.js"
   },
   "devDependencies": {
     "@chainlink/ace": "^1.0.0",
@@ -70,5 +72,10 @@
     "ethers": {
       "optional": true
     }
+  },
+  "exports": {
+    "./canton": "./scripts/canton/index.js",
+    "./*": "./*",
+    "./package.json": "./package.json"
   }
 }

@@ -126,9 +126,22 @@ export async function send({
   // CCIPSend consumes the router, so the next send needs the id it returns.
   const nextRouter = sent.find((e) => e.templateId.endsWith(":PerPartyRouter") && e.acsDelta);
   if (!nextRouter) throw new Error("CCIPSend produced no router");
-  log("message sent from Canton");
 
-  return { router: nextRouter.contractId };
+  // The wire message is carried by the CCIPMessageSent event contract.
+  const sentEvent = sent.find((e) => e.templateId.endsWith(":CCIPMessageSent"));
+  if (!sentEvent) throw new Error("CCIPSend produced no CCIPMessageSent");
+  const event = sentEvent.createArgument?.event;
+  if (!event?.encodedMessage) throw new Error("CCIPMessageSent carries no encodedMessage");
+
+  log(`message sent from Canton: ${event.messageId}`);
+
+  return {
+    router: nextRouter.contractId,
+    messageId: event.messageId,
+    encodedMessage: event.encodedMessage,
+    sequenceNumber: event.sequenceNumber,
+    messageSent: sentEvent.contractId,
+  };
 }
 
 export const BURN_MINT_FACTORY = `${PACKAGES.burnMint}:Splice.Api.Token.BurnMintV1:BurnMintFactory`;

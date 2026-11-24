@@ -1,6 +1,7 @@
 // Deploys the CCIP 2.0 contracts onto a local Canton participant through the upstream `CCIPFactory`.
 // Each choice consumes the factory and creates a new one next to the deployed contract.
 
+import { committeeKey, publicKeyOf } from "./committee.js";
 import { instanceAddress, variant } from "./sandbox.js";
 
 // Main package ids of the pinned release (`contracts/v2.3.0`). They move only when the pin moves.
@@ -19,11 +20,9 @@ export const PACKAGES = {
 export const FACTORY = `${PACKAGES.factory}:CCIP.FactoryV2:CCIPFactory`;
 export const ROUTER_FACTORY = `${PACKAGES.runtime}:CCIP.RuntimeV2.PerPartyRouter:PerPartyRouterFactory`;
 export const ROUTER_TEMPLATE = `${PACKAGES.runtime}:CCIP.RuntimeV2.PerPartyRouter:PerPartyRouter`;
-export const EXECUTING_MESSAGE_INTERFACE = `${PACKAGES.api}:CCIP.APIV2.ExecutingMessage:IExecutingMessage`;
 export const RECEIVER = `${PACKAGES.receiver}:CCIP.CCIPReceiver:CCIPReceiver`;
 export const COMMITTEE_VERIFIER = `${PACKAGES.committeeVerifier}:CCIP.CommitteeVerifierV2:CommitteeVerifier`;
 export const TOKEN_ADMIN_REGISTRY = `${PACKAGES.core}:CCIP.CoreV2.TokenAdminRegistry:TokenAdminRegistry`;
-export const TOKEN_CONFIG = "TokenConfig";
 
 /** A local instance id. Every CCIP contract in the instance is addressed as `<instanceId>@<party>`. */
 export const INSTANCE_ID = "chainlink-local";
@@ -33,7 +32,6 @@ export const LINK_INSTANCE_ID = `${INSTANCE_ID}-link`;
 export const LINK_INSTRUMENT_ID = (owner) => ({ admin: owner, id: "LINK" });
 export const POOL_INSTANCE_ID = `${LINK_INSTANCE_ID}-bm-pool`;
 export const POOL_TEMPLATE = `${PACKAGES.burnMintPool}:CCIP.BurnMintTokenPoolV2:BurnMintTokenPool`;
-export const RATE_LIMITER_TEMPLATE = `${PACKAGES.rateLimiter}:CCIP.RateLimiterV2:RateLimiter`;
 
 /**
  * Deploys global config, RMN remote, token admin registry, fee quoter, committee verifier,
@@ -167,14 +165,17 @@ export async function bootstrap({
     remoteChainConfigs: [],
   });
 
-  // The verifier only accepts messages from chains it has a signature config for.
-  if (sourceChainSelector && committeeSignerKeys.length > 0) {
+  // The verifier only accepts messages from chains it has a signature config for, and the lane
+  // mandates it, so a lane without signers is unusable. Default to the deterministic seed-0 key.
+  if (sourceChainSelector) {
     deployed.committeeVerifier = await configureVerifier({
       api,
       owner,
       verifier: deployed.committeeVerifier,
       sourceChainSelector,
-      signerKeys: committeeSignerKeys,
+      signerKeys: committeeSignerKeys.length > 0
+        ? committeeSignerKeys
+        : [publicKeyOf(committeeKey(0))],
       threshold: committeeThreshold,
       log,
     });
@@ -232,9 +233,9 @@ export async function bootstrap({
         direction,
         mode,
         isEnabled: true,
-        capacity: "1000000000",
-        rate: "1000000000",
-        tokens: "1000000000",
+        capacity: "1000000000000000000",
+        rate: "1000000000000000000",
+        tokens: "1000000000000000000",
         lastUpdated: new Date().toISOString(),
       });
       return { cid, address: instanceAddress(instanceId, owner) };

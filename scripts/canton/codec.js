@@ -74,15 +74,6 @@ export function finalityConfig(blockDepth = 0) {
   return out;
 }
 
-/** 20-byte EVM address as the 32-byte word the codec expects. */
-export function evmAddressToBytes32(address) {
-  const raw = getBytes(address);
-  if (raw.length !== 20) throw new Error("expected a 20-byte address");
-  const out = new Uint8Array(32);
-  out.set(raw, 12);
-  return out;
-}
-
 export function hexToBytes(hex) {
   return getBytes(`0x${hex.replace(/^0x/, "")}`);
 }
@@ -91,7 +82,10 @@ export function bytesToHex(bytes) {
   return Buffer.from(bytes).toString("hex");
 }
 
-const u8 = (n) => Uint8Array.of(n);
+const u8 = (n) => {
+  if (!Number.isInteger(n) || n < 0 || n > 0xff) throw new Error(`u8 out of range: ${n}`);
+  return Uint8Array.of(n);
+};
 
 const u32 = (n) => {
   const out = new Uint8Array(4);
@@ -105,9 +99,13 @@ const u64 = (n) => {
   return out;
 };
 
-const lenU8 = (v) => concat(u8(v.length), v);
+const lenU8 = (v) => {
+  if (v.length > 0xff) throw new Error(`field of ${v.length} bytes does not fit a u8 length prefix`);
+  return concat(u8(v.length), v);
+};
 
 const lenU16 = (v) => {
+  if (v.length > 0xffff) throw new Error(`field of ${v.length} bytes does not fit a u16 length prefix`);
   const prefix = new Uint8Array(2);
   new DataView(prefix.buffer).setUint16(0, v.length);
   return concat(prefix, v);

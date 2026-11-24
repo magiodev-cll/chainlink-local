@@ -73,3 +73,30 @@ test("party address is keccak over the utf8 party text", () => {
   assert.deepEqual(a, hashAddress("alice"));
   assert.notDeepEqual(a, hashAddress("bob"));
 });
+
+test("length prefixes refuse to truncate", () => {
+  const base = {
+    sourceChainSelector: 1n,
+    destChainSelector: 2n,
+    sequenceNumber: 3n,
+    executionGasLimit: 4,
+    ccipReceiveGasLimit: 5,
+    finality: finalityConfig(0),
+    ccvAndExecutorHash: new Uint8Array(32),
+    onRampAddress: new Uint8Array(),
+    offRampAddress: new Uint8Array(),
+    sender: new Uint8Array(),
+    receiver: new Uint8Array(),
+    destBlob: new Uint8Array(),
+    messageData: new Uint8Array(),
+  };
+
+  assert.throws(
+    () => encodeMessageV1({ ...base, sender: new Uint8Array(256) }),
+    /u8 length prefix/,
+  );
+  assert.throws(
+    () => encodeMessageV1({ ...base, destBlob: new Uint8Array(70_000) }),
+    /u16 length prefix/,
+  );
+});

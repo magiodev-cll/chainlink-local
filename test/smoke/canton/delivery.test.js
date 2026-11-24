@@ -3,103 +3,33 @@
 
 import assert from "node:assert/strict";
 import test from "node:test";
-import { listDars, resolveArtifacts } from "../../../scripts/canton/artifacts.js";
-import { bootstrap, PACKAGES, RECEIVER } from "../../../scripts/canton/bootstrap.js";
-import { committeeKey, publicKeyOf } from "../../../scripts/canton/committee.js";
-import { deliver } from "../../../scripts/canton/deliver.js";
-import { ledger, startSandbox, variant } from "../../../scripts/canton/sandbox.js";
+import { startCantonLocal } from "../../../scripts/canton/index.js";
 
-// `canton-localnet` from chain-selectors. The local participant plays this chain.
-const CANTON_LOCALNET_SELECTOR = "8706591216959472610";
-// Ethereum Sepolia, the lane the global config opens.
-const ETHEREUM_SEPOLIA_SELECTOR = "16015286601757825753";
 const PAYLOAD = "hello from ethereum";
 
-test(
-  "deploys a CCIP instance and delivers a message through the OffRamp",
-  { timeout: 300_000 },
-  async () => {
-    const dars = listDars(resolveArtifacts());
-    assert.ok(dars.length >= 40);
+test("delivers data and tokens through the real OffRamp", { timeout: 300_000 }, async () => {
+  const canton = await startCantonLocal();
+  try {
+    const result = await canton.deliver({ data: Buffer.from(PAYLOAD).toString("hex") });
 
-    const sandbox = await startSandbox({ dars });
-    try {
-      const api = ledger(sandbox.url);
-      await waitForPackage(api, PACKAGES.factory);
+    assert.match(result.messageId, /^0x[0-9a-f]{64}$/);
+    // The receiver returns a CCIPMessageReceived contract the application can read.
+    assert.ok(result.messageReceived);
+    assert.equal(result.holding, undefined, "a data-only message moves no tokens");
 
-      const alice = await api.allocateParty("alice");
-      const committeeKeys = [committeeKey(0)];
-      const { addresses, deployed, router } = await bootstrap({
-        api,
-        owner: alice,
-        chainSelector: CANTON_LOCALNET_SELECTOR,
-        sourceChainSelector: ETHEREUM_SEPOLIA_SELECTOR,
-        committeeSignerKeys: committeeKeys.map(publicKeyOf),
-      });
-      for (const name of [
-        "globalConfig", "rmnRemote", "tokenAdminRegistry", "feeQuoter",
-        "committeeVerifier", "executor", "offRamp", "onRamp", "routerFactory", "linkRegistry",
-      ]) {
-        assert.ok(deployed[name], `${name} not deployed`);
-      }
+    // Same path, now carrying 7 tokens at the instrument's 10 decimals.
+    const withToken = await canton.deliver({
+      token: { amount: 7n * 10n ** 10n },
+      data: Buffer.from("tokens").toString("hex"),
+    });
 
-      const receiver = await api.create(
-        RECEIVER,
-        {
-          instanceId: "chainlink-local-receiver",
-          owner: alice,
-          requiredCCVs: [],
-          optionalCCVs: [],
-          optionalThreshold: 0,
-          receiverFinalityConfig: variant("WaitForFinality"),
-        },
-        alice,
-      );
-
-      const result = await deliver({
-        api,
-        owner: alice,
-        receiver,
-        router,
-        deployed,
-        addresses,
-        receiverParty: alice,
-        sourceChainSelector: ETHEREUM_SEPOLIA_SELECTOR,
-        committeeKeys,
-        data: Buffer.from(PAYLOAD).toString("hex"),
-      });
-
-      assert.match(result.messageId, /^0x[0-9a-f]{64}$/);
-      // The receiver returns a CCIPMessageReceived contract the application can read.
-      assert.ok(result.messageReceived);
-
-      // Same path, now carrying a token transfer through the registered pool.
-      const withToken = await deliver({
-        api,
-        owner: alice,
-        receiver,
-        router: result.router,
-        deployed,
-        addresses,
-        receiverParty: alice,
-        sourceChainSelector: ETHEREUM_SEPOLIA_SELECTOR,
-        committeeKeys,
-        token: { amount: 7n },
-        data: Buffer.from("tokens").toString("hex"),
-      });
-      assert.ok(withToken.messageReceived);
-      assert.notEqual(withToken.messageId, result.messageId);
-    } finally {
-      await sandbox.stop();
-    }
-  },
-);
-
-async function waitForPackage(api, packageId, timeoutMs = 120_000) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if ((await api.packages()).includes(packageId)) return;
-    await new Promise((resolve) => setTimeout(resolve, 1_000));
+    assert.ok(withToken.messageReceived);
+    assert.notEqual(withToken.messageId, result.messageId);
+    // Settlement actually moves value: the pool releases the ticket into a holding.
+    assert.ok(withToken.holding, "no holding created");
+    assert.equal(Number(withToken.holding.amount), 7);
+    assert.equal(withToken.holding.owner, canton.party);
+  } finally {
+    await canton.stop();
   }
-  throw new Error(`package ${packageId} did not load within ${timeoutMs}ms`);
-}
+});
