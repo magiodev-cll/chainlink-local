@@ -83,27 +83,27 @@ export function ledger(baseUrl) {
     return text ? JSON.parse(text) : {};
   };
 
-  const submit = async (commands, actAs) => {
-    const res = await call("POST", "commands/submit-and-wait-for-transaction", {
-      commands: {
-        commandId: crypto.randomUUID(),
-        commands,
-        userId: "participant_admin",
-        actAs: [actAs],
-        readAs: [],
-      },
-    });
+  const submit = async (commands, actAs, { disclosedContracts } = {}) => {
+    const body = {
+      commandId: crypto.randomUUID(),
+      commands,
+      userId: "participant_admin",
+      actAs: [actAs],
+      readAs: [],
+    };
+    if (disclosedContracts?.length) body.disclosedContracts = disclosedContracts;
+    const res = await call("POST", "commands/submit-and-wait-for-transaction", { commands: body });
     return res.transaction.events.filter((e) => e.CreatedEvent).map((e) => e.CreatedEvent);
   };
 
-  const create = async (templateId, createArguments, actAs) => {
-    const [created] = await submit([{ CreateCommand: { templateId, createArguments } }], actAs);
+  const create = async (templateId, createArguments, actAs, options) => {
+    const [created] = await submit([{ CreateCommand: { templateId, createArguments } }], actAs, options);
     if (!created) throw new Error(`create ${templateId} produced no contract`);
     return created.contractId;
   };
 
-  const exercise = (templateId, contractId, choice, choiceArgument, actAs) =>
-    submit([{ ExerciseCommand: { templateId, contractId, choice, choiceArgument } }], actAs);
+  const exercise = (templateId, contractId, choice, choiceArgument, actAs, options) =>
+    submit([{ ExerciseCommand: { templateId, contractId, choice, choiceArgument } }], actAs, options);
 
   return {
     version: () => call("GET", "version"),
@@ -113,17 +113,66 @@ export function ledger(baseUrl) {
     submit,
     create,
     exercise,
-    /** Exercise a choice and return its result, which is where the encoded message lives for `CCIPSend`. */
-    exerciseResult: async (templateId, contractId, choice, choiceArgument, actAs) => {
-      const res = await call("POST", "commands/submit-and-wait-for-transaction", {
-        commands: {
-          commandId: crypto.randomUUID(),
-          commands: [{ ExerciseCommand: { templateId, contractId, choice, choiceArgument } }],
-          userId: "participant_admin",
-          actAs: [actAs],
-          readAs: [],
+    /** Active contracts visible to `party`, with the created-event blob needed to disclose them. */
+    async activeContracts(party, templateId) {
+      const { offset } = await call("GET", "state/ledger-end");
+      const res = await call("POST", "state/active-contracts", {
+        activeAtOffset: offset,
+        filter: {
+          filtersByParty: {
+            [party]: {
+              cumulative: [
+                {
+                  identifierFilter: {
+                    TemplateFilter: { value: { templateId, includeCreatedEventBlob: true } },
+                  },
+                },
+              ],
+            },
+          },
         },
+        verbose: true,
       });
+      return res.map((entry) => entry.contractEntry.JsActiveContract.createdEvent);
+    },
+
+    /** Every active contract the party can see. Only such a party can build disclosures. */
+    async activeContractsWildcard(party) {
+      const { offset } = await call("GET", "state/ledger-end");
+      const res = await call("POST", "state/active-contracts", {
+        activeAtOffset: offset,
+        filter: {
+          filtersByParty: {
+            [party]: {
+              cumulative: [
+                { identifierFilter: { WildcardFilter: { value: { includeCreatedEventBlob: true } } } },
+              ],
+            },
+          },
+        },
+        verbose: true,
+      });
+      return res.map((entry) => entry.contractEntry.JsActiveContract.createdEvent);
+    },
+
+    async synchronizerId() {
+      const res = await call("GET", "state/connected-synchronizers");
+      const first = res.connectedSynchronizers?.[0];
+      if (!first) throw new Error("no connected synchronizer");
+      return first.synchronizerId;
+    },
+
+    /** Exercise a choice and return its result, which is where the encoded message lives for `CCIPSend`. */
+    exerciseResult: async (templateId, contractId, choice, choiceArgument, actAs, options = {}) => {
+      const body = {
+        commandId: crypto.randomUUID(),
+        commands: [{ ExerciseCommand: { templateId, contractId, choice, choiceArgument } }],
+        userId: "participant_admin",
+        actAs: [actAs],
+        readAs: [],
+      };
+      if (options.disclosedContracts?.length) body.disclosedContracts = options.disclosedContracts;
+      const res = await call("POST", "commands/submit-and-wait-for-transaction", { commands: body });
       const exercised = res.transaction.events
         .map((e) => e.ExercisedEvent)
         .find((e) => e && e.choice === choice && e.contractId === contractId);
@@ -136,6 +185,20 @@ export function ledger(baseUrl) {
 /** Daml variants encode as `{"tag": "Name", "value": ...}`; nullary constructors still need the key. */
 export function variant(tag, value = {}) {
   return { tag, value };
+}
+
+/** Pre-attaches disclosed contracts to every submission, for parties that cannot see the CCIP contracts. */
+export function withDisclosures(api, disclosedContracts) {
+  if (!disclosedContracts?.length) return api;
+  const options = { disclosedContracts };
+  return {
+    ...api,
+    create: (templateId, createArguments, actAs) => api.create(templateId, createArguments, actAs, options),
+    exercise: (templateId, contractId, choice, choiceArgument, actAs) =>
+      api.exercise(templateId, contractId, choice, choiceArgument, actAs, options),
+    exerciseResult: (templateId, contractId, choice, choiceArgument, actAs) =>
+      api.exerciseResult(templateId, contractId, choice, choiceArgument, actAs, options),
+  };
 }
 
 /** `Chainlink.InstanceAddress.RawInstanceAddress` is newtype `RawInstanceAddress Text`, encoded as `{"unpack": ...}`. */

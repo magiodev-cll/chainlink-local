@@ -3,6 +3,7 @@
 // Mirrors `CCIP.CCIPReceiver.Execute`.
 
 import { committeeKey, verifierResults } from "./committee.js";
+import { withDisclosures } from "./sandbox.js";
 import {
   bytesToHex,
   encodeMessageV1,
@@ -36,6 +37,7 @@ export async function deliver(opts) {
     receiverParty,
     sourceChainSelector,
     committeeKeys = [committeeKey(0)],
+    disclosures = [],
     versionTag = "e9a05a20",
     onRampAddress = `000000000000000000000000${"11".repeat(20)}`,
     sender = `000000000000000000000000${"33".repeat(20)}`,
@@ -45,6 +47,8 @@ export async function deliver(opts) {
     ccipReceiveGasLimit = 200_000,
     log = () => {},
   } = opts;
+
+  const ledgerApi = withDisclosures(api, disclosures);
 
   const tokenTransfer = token
     ? encodeTokenTransferV1({
@@ -88,7 +92,7 @@ export async function deliver(opts) {
     },
   };
 
-  const events = await api.exercise(
+  const events = await ledgerApi.exercise(
     addresses.receiverTemplate,
     receiver,
     "Execute",
