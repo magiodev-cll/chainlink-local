@@ -44,6 +44,20 @@ export function encodeMessageV1(m) {
   );
 }
 
+/** Token transfer section, ported from `encodeTokenTransferV1`. Amount is a 32-byte word. */
+export function encodeTokenTransferV1(t) {
+  if (t.amount.length !== 32) throw new Error("amount must be 32 bytes");
+  return concat(
+    u8(1),
+    t.amount,
+    lenU8(t.sourcePoolAddress),
+    lenU8(t.sourceTokenAddress),
+    lenU8(t.destTokenAddress),
+    lenU8(t.tokenReceiver),
+    lenU16(t.extraData ?? new Uint8Array()),
+  );
+}
+
 export function messageId(encoded) {
   return keccak256(encoded);
 }

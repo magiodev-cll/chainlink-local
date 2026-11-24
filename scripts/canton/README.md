@@ -40,11 +40,11 @@ Daml encoder in the released DAR.
 
 ## What is not built
 
-- **Token transfers.** The pool templates ship and the factory can deploy them, but no pool is
-  registered in the token admin registry and the inbound pool verification step is not wired.
-- **Real committee signatures.** The verifier is lane-mandated, and the probe satisfies it the
-  way the upstream Daml tests do, by adding the verification directly. Running ECDSA means
-  signing after party allocation, because the receiver field is a hash of a party.
+- ~~Token transfers~~ Done inbound: a burn/mint pool is deployed, registered through the admin
+  handshake, opened for the source lane, and the receiver runs `TokenPool_VerifyInboundMessage`
+  before the CCVs. Outbound token transfers still need the fee holding and `CCIPSend`.
+- ~~Real committee signatures~~ Done: `committee.js` signs `keccak256(versionTag || messageId)` and
+  the on-chain `CommitteeVerifier` checks ECDSA against configured signer keys.
 - **The EVM half.** A `routeToCanton()` alongside the existing `routeToSvm()`.
 
 ## Toolchain facts
@@ -83,5 +83,6 @@ are why `bootstrap.js` looks verbose.
 - `artifacts.js` pins the release, verifies sha256, unpacks to `~/.cache/chainlink-local/canton`.
 - `sandbox.js` starts and stops the daemon, wraps the JSON API, and encodes the small Daml types.
 - `bootstrap.js` deploys the CCIP instance and creates the router.
-- `deliver.js` builds a message, calls `PrepareExecute`, adds the CCV verification and executes.
+- `committee.js` holds local signer keys and builds the verifierResults blob.
+- `deliver.js` builds a message and calls `CCIPReceiver.Execute`, which runs the whole inbound path.
 
