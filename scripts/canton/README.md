@@ -50,6 +50,32 @@ there is no key to sign an inbound fork message with.
 - Handing a message to a live EVM node. `routeToCanton()` produces the struct; the call itself is
   the caller's.
 
+## Experimental: connect mode
+
+Local mode has one party owning everything, so no contract needs disclosing. A real network does not
+work that way: an app party sees only its own router and receiver, so every context contract has to
+be passed as a disclosed contract.
+
+```js
+// As the deployer, build a bundle another party can use.
+const bundle = await exportInstance({ api, party: owner, deployed, addresses, router, receiver });
+
+// As the app party, on the same or another participant.
+const canton = await connectCanton({ url, party: app, bundle });
+await canton.deliver({ committeeKeys });
+```
+
+Limitations, all of them real:
+
+- **It does not fetch anything from a network service.** The caller has to obtain the bundle from
+  whoever can see the contracts. On a live network that means Chainlink's published contract data.
+- **Inbound needs committee material.** `deliver` signs with `committeeKeys`, which only works on a
+  lane whose committee you control. Against a real lane, pass `verifierResults` you obtained from
+  Chainlink instead. Without one of the two, inbound cannot work, and that is a trust limit.
+- **No authentication.** The client sends no token; a validator requiring OIDC needs a proxy.
+- **Tested only against a local sandbox** with two parties on one participant. It has never run
+  against Canton testnet.
+
 ## Requirements
 
 Node 22, JDK 17 and the Daml SDK, because the sandbox is the SDK's daemon:

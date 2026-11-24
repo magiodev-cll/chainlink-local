@@ -317,6 +317,12 @@ export async function bootstrap({
     (e) => e.templateId.endsWith(":PerPartyRouter") && !e.templateId.includes("Factory"),
   );
   if (!router) throw new Error("CreateRouter produced no PerPartyRouter");
+
+  // CreateRouter consumes the factory, so the returned id is the one still alive.
+  const nextFactory = routerEvents.find(
+    (e) => e.templateId.endsWith(":PerPartyRouterFactory") && e.acsDelta,
+  );
+  if (nextFactory) deployed.routerFactory = nextFactory.contractId;
   log("CreateRouter: ok");
 
   at.chainSelector = chainSelector;

@@ -17,6 +17,7 @@ export { committeeKey, publicKeyOf, verifierResults } from "./committee.js";
 export { deliver } from "./deliver.js";
 export { toAny2EvmMessage } from "./evm.js";
 export { configureDestLane } from "./lane.js";
+export { connectCanton, exportInstance } from "./connect.js";
 export { instanceAddress, ledger, startSandbox, variant } from "./sandbox.js";
 export { send } from "./send.js";
 

@@ -2,6 +2,7 @@
 
 import { PACKAGES, POOL_INSTANCE_ID, POOL_TEMPLATE } from "./bootstrap.js";
 import { bytesToHex } from "./codec.js";
+import { withDisclosures } from "./sandbox.js";
 
 export async function send({
   api,
@@ -15,14 +16,16 @@ export async function send({
   gasLimit = 200_000,
   feeAmount = "10000.0",
   token,
+  disclosures = [],
   log = () => {},
 }) {
+  const ledgerApi = withDisclosures(api, disclosures);
   const instrumentId = { admin: owner, id: "LINK" };
 
-  const holding = await mintHolding(api, owner, deployed, feeAmount, "fee");
+  const holding = await mintHolding(ledgerApi, owner, deployed, feeAmount, "fee");
 
   const transferHolding = token
-    ? await mintHolding(api, owner, deployed, token.amount, "transfer")
+    ? await mintHolding(ledgerApi, owner, deployed, token.amount, "transfer")
     : undefined;
 
   const context = {
@@ -36,7 +39,7 @@ export async function send({
     },
   };
 
-  const prepared = await api.exercise(
+  const prepared = await ledgerApi.exercise(
     addresses.routerTemplate,
     router,
     "PrepareSend",
@@ -67,7 +70,7 @@ export async function send({
   // The pool resolves its outbound CCVs, then quotes its fee, both while the message is open.
   if (token) {
     current = sendingMessageOf(
-      await api.exercise(
+      await ledgerApi.exercise(
         POOL_TEMPLATE,
         deployed.tokenPool,
         "VerifyOutboundCCVs",
@@ -84,7 +87,7 @@ export async function send({
     );
 
     current = sendingMessageOf(
-      await api.exercise(
+      await ledgerApi.exercise(
         POOL_TEMPLATE,
         deployed.tokenPool,
         "CalculateFee",
@@ -103,7 +106,7 @@ export async function send({
   }
 
   // Fee is priced while the message is still Prepared, one call per mandated CCV.
-  const pricedByCcv = await api.exercise(
+  const pricedByCcv = await ledgerApi.exercise(
     COMMITTEE_VERIFIER,
     deployed.committeeVerifier,
     "CalculateFee",
@@ -112,7 +115,7 @@ export async function send({
   );
   current = sendingMessageOf(pricedByCcv);
 
-  const finalized = await api.exercise(
+  const finalized = await ledgerApi.exercise(
     addresses.routerTemplate,
     router,
     "FinalizeFee",
@@ -123,7 +126,7 @@ export async function send({
 
   // A token transfer is locked or burned only once the fee is finalised.
   if (token) {
-    const locked = await api.exercise(
+    const locked = await ledgerApi.exercise(
       POOL_TEMPLATE,
       deployed.tokenPool,
       "LockOrBurn",
@@ -149,7 +152,7 @@ export async function send({
   }
 
   // Verifier data can only be attached after finalisation.
-  const forwarded = await api.exercise(
+  const forwarded = await ledgerApi.exercise(
     COMMITTEE_VERIFIER,
     deployed.committeeVerifier,
     "ForwardToVerifier",
@@ -164,7 +167,7 @@ export async function send({
   );
   current = sendingMessageOf(forwarded);
 
-  const sent = await api.exercise(
+  const sent = await ledgerApi.exercise(
     addresses.routerTemplate,
     router,
     "CCIPSend",
@@ -224,8 +227,8 @@ function word32(value) {
   return Buffer.from(hex.padStart(64, "0"), "hex");
 }
 
-async function mintHolding(api, owner, deployed, amount, label) {
-  const minted = await api.exercise(
+async function mintHolding(ledgerApi, owner, deployed, amount, label) {
+  const minted = await ledgerApi.exercise(
     BURN_MINT_FACTORY,
     deployed.linkRegistry,
     "BurnMintFactory_BurnMint",
