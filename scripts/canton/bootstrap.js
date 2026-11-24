@@ -1,6 +1,7 @@
 // Deploys the CCIP 2.0 contracts onto a local Canton participant through the upstream `CCIPFactory`.
 // Each choice consumes the factory and creates a new one next to the deployed contract.
 
+import { committeeKey, publicKeyOf } from "./committee.js";
 import { instanceAddress, variant } from "./sandbox.js";
 
 // Main package ids of the pinned release (`contracts/v2.3.0`). They move only when the pin moves.
@@ -13,16 +14,15 @@ export const PACKAGES = {
   core: "7a08ead9e5158d6e493c144c63a91b1a7e23b9424359c1551ccfad991ba39c39",
   burnMintPool: "a4a07fc1d1d686f778821a78c795c8df6dc3896dd3f171d991bfa5f374f86662",
   rateLimiter: "3c33043d19b1a5eb1b842d3c1634ab73c6886c3b1e0b36628053093dbe5739c3",
+  burnMint: "9cc2cbc838ef38dc2c7f34014c9c452bcf71b8e2a4f939235fc0b5d0924b185e",
 };
 
 export const FACTORY = `${PACKAGES.factory}:CCIP.FactoryV2:CCIPFactory`;
 export const ROUTER_FACTORY = `${PACKAGES.runtime}:CCIP.RuntimeV2.PerPartyRouter:PerPartyRouterFactory`;
 export const ROUTER_TEMPLATE = `${PACKAGES.runtime}:CCIP.RuntimeV2.PerPartyRouter:PerPartyRouter`;
-export const EXECUTING_MESSAGE_INTERFACE = `${PACKAGES.api}:CCIP.APIV2.ExecutingMessage:IExecutingMessage`;
 export const RECEIVER = `${PACKAGES.receiver}:CCIP.CCIPReceiver:CCIPReceiver`;
 export const COMMITTEE_VERIFIER = `${PACKAGES.committeeVerifier}:CCIP.CommitteeVerifierV2:CommitteeVerifier`;
 export const TOKEN_ADMIN_REGISTRY = `${PACKAGES.core}:CCIP.CoreV2.TokenAdminRegistry:TokenAdminRegistry`;
-export const TOKEN_CONFIG = "TokenConfig";
 
 /** A local instance id. Every CCIP contract in the instance is addressed as `<instanceId>@<party>`. */
 export const INSTANCE_ID = "chainlink-local";
@@ -32,7 +32,6 @@ export const LINK_INSTANCE_ID = `${INSTANCE_ID}-link`;
 export const LINK_INSTRUMENT_ID = (owner) => ({ admin: owner, id: "LINK" });
 export const POOL_INSTANCE_ID = `${LINK_INSTANCE_ID}-bm-pool`;
 export const POOL_TEMPLATE = `${PACKAGES.burnMintPool}:CCIP.BurnMintTokenPoolV2:BurnMintTokenPool`;
-export const RATE_LIMITER_TEMPLATE = `${PACKAGES.rateLimiter}:CCIP.RateLimiterV2:RateLimiter`;
 
 /**
  * Deploys global config, RMN remote, token admin registry, fee quoter, committee verifier,
@@ -166,14 +165,17 @@ export async function bootstrap({
     remoteChainConfigs: [],
   });
 
-  // The verifier only accepts messages from chains it has a signature config for.
-  if (sourceChainSelector && committeeSignerKeys.length > 0) {
+  // The verifier only accepts messages from chains it has a signature config for, and the lane
+  // mandates it, so a lane without signers is unusable. Default to the deterministic seed-0 key.
+  if (sourceChainSelector) {
     deployed.committeeVerifier = await configureVerifier({
       api,
       owner,
       verifier: deployed.committeeVerifier,
       sourceChainSelector,
-      signerKeys: committeeSignerKeys,
+      signerKeys: committeeSignerKeys.length > 0
+        ? committeeSignerKeys
+        : [publicKeyOf(committeeKey(0))],
       threshold: committeeThreshold,
       log,
     });
@@ -231,9 +233,9 @@ export async function bootstrap({
         direction,
         mode,
         isEnabled: true,
-        capacity: "1000000000",
-        rate: "1000000000",
-        tokens: "1000000000",
+        capacity: "1000000000000000000",
+        rate: "1000000000000000000",
+        tokens: "1000000000000000000",
         lastUpdated: new Date().toISOString(),
       });
       return { cid, address: instanceAddress(instanceId, owner) };
@@ -243,6 +245,7 @@ export async function bootstrap({
     const inboundCustomLimiter = await limiter("inbound-custom-limiter", "RateLimitDirection_Inbound", "RateLimitMode_CustomFinality");
     const outboundLimiter = await limiter("outbound-limiter", "RateLimitDirection_Outbound", "RateLimitMode_DefaultFinality");
     deployed.inboundRateLimiter = inboundLimiter.cid;
+    deployed.outboundRateLimiter = outboundLimiter.cid;
 
     const added = await api.exercise(POOL_TEMPLATE, deployed.tokenPool, "ApplyChainUpdates", {
       remoteChainSelectorsToRemove: [],
@@ -250,7 +253,8 @@ export async function bootstrap({
         {
           remoteChainSelector: sourceChainSelector,
           remotePools: ["66".repeat(32)],
-          remoteTokenAddress: "55".repeat(32),
+          // EVM addresses are 20 bytes, left-padded to the 32-byte word the codec carries.
+          remoteTokenAddress: `${"00".repeat(12)}${"55".repeat(20)}`,
           inboundCCVs: [at.committeeVerifier],
           outboundCCVs: [],
           finalityConfig: variant("WaitForFinality"),

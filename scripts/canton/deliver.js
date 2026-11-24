@@ -2,7 +2,7 @@
 // which prepares, verifies the CCV signatures, runs the pools and executes.
 // Mirrors `CCIP.CCIPReceiver.Execute`.
 
-import { verifierResults } from "./committee.js";
+import { committeeKey, verifierResults } from "./committee.js";
 import {
   bytesToHex,
   encodeMessageV1,
@@ -35,7 +35,7 @@ export async function deliver(opts) {
     addresses,
     receiverParty,
     sourceChainSelector,
-    committeeKeys = [],
+    committeeKeys = [committeeKey(0)],
     versionTag = "e9a05a20",
     onRampAddress = `000000000000000000000000${"11".repeat(20)}`,
     sender = `000000000000000000000000${"33".repeat(20)}`,
@@ -48,9 +48,10 @@ export async function deliver(opts) {
 
   const tokenTransfer = token
     ? encodeTokenTransferV1({
+        // CCIP amounts are base units; the Daml side uses whole tokens with 10 decimals.
         amount: word32(token.amount),
         sourcePoolAddress: token.sourcePoolAddress ?? hexToBytes("66".repeat(32)),
-        sourceTokenAddress: token.sourceTokenAddress ?? hexToBytes("55".repeat(32)),
+        sourceTokenAddress: token.sourceTokenAddress ?? hexToBytes(`${"00".repeat(12)}${"55".repeat(20)}`),
         // The pool matches this against keccak256(utf8("<id>@<admin>")) of its instrument.
         destTokenAddress: token.destTokenAddress ?? hashAddress(`LINK@${owner}`),
         tokenReceiver: hashAddress(token.tokenReceiverParty ?? receiverParty),
@@ -122,6 +123,19 @@ export async function deliver(opts) {
   const received = events.find((e) => e.templateId.endsWith(":CCIPMessageReceived"));
   if (!received) throw new Error("receiver Execute produced no CCIPMessageReceived");
 
+  // The pool releases the inbound ticket during execute, so a token message settles here.
+  let holding;
+  if (token) {
+    const created = events.find((e) => e.templateId.endsWith(":LinkHolding") && e.acsDelta);
+    if (!created) throw new Error("token message produced no holding; the pool did not settle");
+    holding = {
+      contractId: created.contractId,
+      owner: created.createArgument?.holdingOwner,
+      amount: created.createArgument?.holdingAmount,
+    };
+    log(`tokens released: ${holding.amount} to ${holding.owner}`);
+  }
+
   // Execute consumes the router and creates a new one, so every delivery returns the next id.
   const nextRouter = events.find(
     (e) => e.templateId.endsWith(":PerPartyRouter") && e.acsDelta,
@@ -133,6 +147,7 @@ export async function deliver(opts) {
     messageId: id,
     encoded,
     messageReceived: received.contractId,
+    holding,
     router: nextRouter.contractId,
     events,
   };
@@ -140,8 +155,9 @@ export async function deliver(opts) {
 
 const avContractId = (contractId) => ({ tag: "AV_ContractId", value: contractId });
 
+/** Full 32-byte big-endian word, so amounts are not capped at 64 bits. */
 function word32(value) {
-  const out = new Uint8Array(32);
-  new DataView(out.buffer).setBigUint64(24, BigInt(value));
-  return out;
+  const hex = BigInt(value).toString(16);
+  if (hex.length > 64) throw new Error(`amount does not fit 32 bytes: ${value}`);
+  return hexToBytes(hex.padStart(64, "0"));
 }

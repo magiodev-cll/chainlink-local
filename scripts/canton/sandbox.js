@@ -83,34 +83,52 @@ export function ledger(baseUrl) {
     return text ? JSON.parse(text) : {};
   };
 
+  const submit = async (commands, actAs) => {
+    const res = await call("POST", "commands/submit-and-wait-for-transaction", {
+      commands: {
+        commandId: crypto.randomUUID(),
+        commands,
+        userId: "participant_admin",
+        actAs: [actAs],
+        readAs: [],
+      },
+    });
+    return res.transaction.events.filter((e) => e.CreatedEvent).map((e) => e.CreatedEvent);
+  };
+
+  const create = async (templateId, createArguments, actAs) => {
+    const [created] = await submit([{ CreateCommand: { templateId, createArguments } }], actAs);
+    if (!created) throw new Error(`create ${templateId} produced no contract`);
+    return created.contractId;
+  };
+
+  const exercise = (templateId, contractId, choice, choiceArgument, actAs) =>
+    submit([{ ExerciseCommand: { templateId, contractId, choice, choiceArgument } }], actAs);
+
   return {
     version: () => call("GET", "version"),
     packages: async () => (await call("GET", "packages")).packageIds,
     parties: async () => (await call("GET", "parties")).partyDetails.map((p) => p.party),
     allocateParty: async (hint) => (await call("POST", "parties", { partyIdHint: hint })).partyDetails.party,
-
-    /** Submits commands and returns the created events, which carry the new contract ids. */
-    async submit(commands, actAs) {
+    submit,
+    create,
+    exercise,
+    /** Exercise a choice and return its result, which is where the encoded message lives for `CCIPSend`. */
+    exerciseResult: async (templateId, contractId, choice, choiceArgument, actAs) => {
       const res = await call("POST", "commands/submit-and-wait-for-transaction", {
         commands: {
           commandId: crypto.randomUUID(),
-          commands,
+          commands: [{ ExerciseCommand: { templateId, contractId, choice, choiceArgument } }],
           userId: "participant_admin",
           actAs: [actAs],
           readAs: [],
         },
       });
-      return res.transaction.events.filter((e) => e.CreatedEvent).map((e) => e.CreatedEvent);
-    },
-
-    async create(templateId, createArguments, actAs) {
-      const [created] = await this.submit([{ CreateCommand: { templateId, createArguments } }], actAs);
-      if (!created) throw new Error(`create ${templateId} produced no contract`);
-      return created.contractId;
-    },
-
-    async exercise(templateId, contractId, choice, choiceArgument, actAs) {
-      return this.submit([{ ExerciseCommand: { templateId, contractId, choice, choiceArgument } }], actAs);
+      const exercised = res.transaction.events
+        .map((e) => e.ExercisedEvent)
+        .find((e) => e && e.choice === choice && e.contractId === contractId);
+      if (!exercised) throw new Error(`no exercise result for ${choice}`);
+      return exercised.exerciseResult;
     },
   };
 }
